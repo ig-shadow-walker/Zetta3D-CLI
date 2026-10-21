@@ -5,12 +5,26 @@ Everything is built on your own machine. There are no GitHub workflows.
 ## Building
 
 ```bash
-bun run build                      # this machine → dist/v<version>/zetta-<os>-<arch>
-bun run build windows              # zetta-windows-x64.exe
+bun run build                      # this machine → release/macos-arm64/zetta
+bun run build windows              # release/windows-x64/zetta.exe
 bun run build macos linux-arm64    # several at once
 bun run build all                  # every release target
-bun run build --list               # every target and its file name
+bun run build --list               # every target and where it goes
 ```
+
+The binaries land in `release/`, one folder per platform:
+
+```
+release/
+  macos-arm64/zetta        macos-x64/zetta
+  linux-x64/zetta          linux-arm64/zetta
+  linux-x64-musl/zetta     linux-arm64-musl/zetta      (Alpine and other musl systems)
+  windows-x64/zetta.exe
+  *-baseline/…             (x64 CPUs without AVX2, when built)
+  SHA256SUMS               (a checksum for every binary in release/)
+```
+
+Building one platform replaces only that platform's folder. `release/` is ignored by git, so the binaries (65–90 MB each) never end up in a commit.
 
 | Target | Builds |
 |---|---|
@@ -26,7 +40,8 @@ How builds work:
 - **Cross-compiling:** every target builds from any machine. Bun downloads each target's runtime once.
 - **macOS builds:** build them on a Mac. Elsewhere they keep a broken code signature and won't start.
 - **Test run:** this machine's binary is run with `--version` after the build. `--skip-smoke` skips that.
-- **Output:** each build replaces `dist/v<version>/` and also writes `SHA256SUMS`, the `.gz` copies and `dist/latest.json`, the files the installers and `zetta upgrade` read. `--version 1.2.3` stamps another version in; the default comes from `packages/cli/package.json`.
+- **Version:** `--version 1.2.3` stamps another version in; the default comes from `packages/cli/package.json`. Check a binary with `release/<platform>/zetta --version`.
+- **Download-host files:** the build also writes `dist/v<version>/` (the binaries under their full names, `.gz` copies, `SHA256SUMS`) and `dist/latest.json`. That is the layout the installers and `zetta upgrade` download from, and what you upload when you publish.
 
 ## One-time setup for releases (owner)
 
@@ -77,6 +92,7 @@ for f in dist/v$V/zetta-windows-*.exe; do
     --tsaurl http://timestamp.digicert.com --name "Zetta 3D CLI" --url https://zetta3d.ai "$f"
 done
 bun run scripts/build-binaries.ts --version $V --rehash    # new SHA256SUMS, .gz copies and latest.json
+bun run build --collect --version $V                       # copy the signed binaries into release/ again
 ```
 
 Some notes on signing:
@@ -84,14 +100,11 @@ Some notes on signing:
 - **Stapling:** a bare executable can't be stapled. Gatekeeper checks the notarisation online.
 - **Hardware or cloud certificates:** for example Azure Trusted Signing. These need other `jsign` `--storetype` options.
 
-**3. Publish.**
+**3. Publish.** The binaries are ready in `release/`. To make them installable with the one-line installers and `zetta upgrade`, upload the download-host files:
 
 ```bash
 V=0.2.0
-git tag v$V && git push origin v$V
-
-# GitHub release (gh CLI, or upload the same files on the website)
-gh release create v$V dist/v$V/* dist/latest.json --title "zetta $V" --generate-notes
+git tag v$V && git push origin v$V             # optional: mark the released commit
 
 # Download host, in this order: the version folder, the installers, then latest.json last
 B=s3://<bucket>/cli; E=(--endpoint-url https://<account-id>.r2.cloudflarestorage.com)   # E=() for AWS
@@ -119,7 +132,9 @@ Some notes on publishing:
 - publish to npm with `--tag next`, and leave the Homebrew formula alone;
 - install one with `ZETTA_VERSION=0.3.0-beta.1`.
 
-## What's in a release
+## The download-host files
+
+What `dist/` holds after a full build, and what you upload:
 
 ```
 v0.2.0/

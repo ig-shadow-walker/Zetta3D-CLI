@@ -280,7 +280,7 @@ See [docs/configuration.md](docs/configuration.md).
 bun install
 bun run zetta -- --help        # run from source
 bun run check                  # typecheck, tests, lint
-bun run build                  # a binary for this machine → dist/ (or: bun run build windows, all, …)
+bun run build                  # a binary for this machine → release/<platform>/ (or: bun run build windows, all, …)
 bun run docs:commands          # regenerate docs/COMMANDS.md and skill/SKILL.md
 ```
 

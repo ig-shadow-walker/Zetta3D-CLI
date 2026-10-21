@@ -236,7 +236,7 @@ function repoFiles(): string[] {
   const inSkipped = (f: string) =>
     relative(ROOT, f)
       .split(sep)
-      .some((part, i) => SKIP_DIRS.has(part) || (i === 0 && part === 'dist'))
+      .some((part, i) => SKIP_DIRS.has(part) || (i === 0 && (part === 'dist' || part === 'release')))
   return [...new Set(files)].filter((f) => !inSkipped(f) && existsSync(f) && statSync(f).isFile())
 }
 

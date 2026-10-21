@@ -98,7 +98,7 @@ Until signing is set up, release binaries are unsigned, apart from the ad-hoc si
 ## Developing
 
 ```sh
-bun run build                            # this machine only -> dist/v<version>/, dist/latest.json, dist/bundle/zetta.js
+bun run build                            # this machine -> release/<platform>/zetta, plus dist/v<version>/, dist/latest.json, dist/bundle/zetta.js
 bun run build windows alpine             # the targets you name; `bun run build all` for every one
 bun run build all --baseline --version 1.2.3
 bun run scripts/test-install.ts          # real installer against a local 127.0.0.1 host, temp HOME

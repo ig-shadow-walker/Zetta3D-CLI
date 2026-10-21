@@ -8,18 +8,23 @@
  *   bun run build --release            # a release: checks, every target + baseline, vendor scan, installer test
  *   bun run build --list               # every target name
  *
- * Output: dist/v<version>/ (binaries, their .gz copies, SHA256SUMS) and dist/latest.json, written by
- * scripts/build-binaries.ts. Each build replaces dist/v<version>/.
+ * Output: release/<platform>/zetta[.exe], one folder per platform (macos-arm64, linux-x64-musl,
+ * windows-x64, …), plus release/SHA256SUMS. Building one platform leaves the other folders alone.
+ *
+ * The download-host layout the installers and `zetta upgrade` read (dist/v<version>/ with .gz
+ * copies and SHA256SUMS, and dist/latest.json) is written by scripts/build-binaries.ts as before.
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { constants, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
-import { binaryName, normalizeVersion } from '../packages/cli/src/upgrade/manifest'
+import { binaryName, keyFromBinaryName, normalizeVersion } from '../packages/cli/src/upgrade/manifest'
 import { platformKey } from '../packages/cli/src/upgrade/platform'
 import { BASELINE_TARGETS, TARGETS } from './build-binaries'
 
 const ROOT = resolve(import.meta.dirname, '..')
+const RELEASE = join(ROOT, 'release')
 
 /** Every buildable key, e.g. darwin-arm64, linux-x64-musl, windows-x64-baseline. */
 const KEYS = [...TARGETS, ...BASELINE_TARGETS].map((t) => t.replace(/^bun-/, ''))
@@ -47,7 +52,8 @@ Options:
   --version <x.y.z>   version to stamp in (default: packages/cli/package.json)
   --outdir <dir>      output folder (default: dist)
   --skip-smoke        do not test-run this machine's binary after building
-  --list              list every target and its file name
+  --collect           only copy the binaries in dist/v<version>/ into release/ again (after signing them)
+  --list              list every target and where it goes
   -h, --help          show this help`
 
 /** Turns names such as `windows`, `macos-arm64` or `alpine` into build keys. Throws on an unknown name. */
@@ -85,6 +91,43 @@ export function resolveTargets(names: string[], host: string = platformKey()): s
   return [...new Set(keys)]
 }
 
+/** The release/ folder for a build key: macos-arm64, linux-x64-musl, windows-x64-baseline, … */
+export function platformFolder(key: string): string {
+  return key.replace(/^darwin-/, 'macos-')
+}
+
+/** What a binary is called inside its platform folder. */
+function shortName(key: string): string {
+  return key.startsWith('windows-') ? 'zetta.exe' : 'zetta'
+}
+
+/**
+ * Copies each built binary into release/<platform>/ (a copy-on-write clone where the disk allows,
+ * so it takes no extra space), then rewrites release/SHA256SUMS for every platform folder there.
+ */
+function collect(versionDir: string, keys: string[]): string[] {
+  const copied: string[] = []
+  for (const key of keys) {
+    const source = join(versionDir, binaryName(key))
+    if (!existsSync(source)) continue
+    const folder = join(RELEASE, platformFolder(key))
+    rmSync(folder, { recursive: true, force: true })
+    mkdirSync(folder, { recursive: true })
+    const target = join(folder, shortName(key))
+    copyFileSync(source, target, constants.COPYFILE_FICLONE)
+    copied.push(target)
+  }
+  const lines: string[] = []
+  for (const folder of readdirSync(RELEASE, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort()) {
+    for (const name of ['zetta', 'zetta.exe']) {
+      const file = join(RELEASE, folder, name)
+      if (existsSync(file)) lines.push(`${createHash('sha256').update(readFileSync(file)).digest('hex')}  ${folder}/${name}`)
+    }
+  }
+  writeFileSync(join(RELEASE, 'SHA256SUMS'), `${lines.join('\n')}\n`)
+  return copied
+}
+
 /** Adds the baseline variant of every x64 key that has one. */
 export function withBaseline(keys: string[]): string[] {
   return [...new Set(keys.flatMap((key) => (KEYS.includes(`${key}-baseline`) ? [key, `${key}-baseline`] : [key])))]
@@ -110,6 +153,7 @@ function main(): void {
         version: { type: 'string' },
         outdir: { type: 'string', default: 'dist' },
         'skip-smoke': { type: 'boolean', default: false },
+        collect: { type: 'boolean', default: false },
         list: { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
       },
@@ -121,7 +165,7 @@ function main(): void {
   const { values, positionals } = parsed
   if (values.help) return console.log(USAGE)
   if (values.list) {
-    for (const key of KEYS) console.log(`  ${key.padEnd(28)} ${binaryName(key)}${key === platformKey() ? '   (this machine)' : ''}`)
+    for (const key of KEYS) console.log(`  ${key.padEnd(26)} release/${platformFolder(key)}/${shortName(key)}${key === platformKey() ? '   (this machine)' : ''}`)
     return
   }
 
@@ -142,6 +186,17 @@ function main(): void {
     process.exit(2)
   }
   const bun = process.execPath
+  const versionDir = resolve(ROOT, values.outdir, `v${version}`)
+
+  if (values.collect) {
+    if (!existsSync(versionDir)) {
+      console.error(`build: ${relative(ROOT, versionDir)} does not exist; build first.`)
+      process.exit(2)
+    }
+    const built = readdirSync(versionDir).map((name) => keyFromBinaryName(name)).filter((key): key is string => Boolean(key))
+    report(collect(versionDir, built))
+    return
+  }
 
   if (values.release) {
     // Fail before the long build, not after it.
@@ -173,13 +228,13 @@ function main(): void {
     else console.log(`\n(No ${platformKey()} build, so the installer test was skipped.)`)
   }
 
-  const dir = resolve(ROOT, values.outdir, `v${version}`)
-  console.log(`\nBuilt into ${relative(ROOT, dir) || dir}:`)
-  for (const key of keys) {
-    const file = join(dir, binaryName(key))
-    if (existsSync(file)) console.log(`  ${relative(ROOT, file).padEnd(46)} ${(statSync(file).size / 1024 / 1024).toFixed(1).padStart(6)} MB`)
-  }
-  if (keys.includes(platformKey())) console.log(`\nTry it: ${relative(ROOT, join(dir, binaryName(platformKey())))} --version`)
+  report(collect(versionDir, keys))
+  if (keys.includes(platformKey())) console.log(`\nTry it: ${relative(ROOT, join(RELEASE, platformFolder(platformKey()), shortName(platformKey())))} --version`)
+}
+
+function report(files: string[]): void {
+  console.log(`\nRelease files (and checksums in release/SHA256SUMS):`)
+  for (const file of files) console.log(`  ${relative(ROOT, file).padEnd(40)} ${(statSync(file).size / 1024 / 1024).toFixed(1).padStart(6)} MB`)
 }
 
 if (import.meta.main) main()

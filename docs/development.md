@@ -12,7 +12,7 @@ bun run zetta -- --profile local auth login     # against a local backend (see t
 |---|---|
 | `bun run check` | Typecheck, every test, lint: run before every change you hand over |
 | `bun run test` | Vitest: SDK, request rules, pipelines, every CLI command group |
-| `bun run build [target]` | A binary for this machine, or for the targets you name (`windows`, `macos`, `alpine`, `all`, …) → `dist/`. `--release` builds and checks a full release ([releasing.md](releasing.md)) |
+| `bun run build [target]` | A binary for this machine, or for the targets you name (`windows`, `macos`, `alpine`, `all`, …) → `release/<platform>/`. `--release` builds and checks a full release ([releasing.md](releasing.md)) |
 | `bun run docs:commands` | Regenerates `docs/COMMANDS.md` and `skill/SKILL.md` from the command definitions |
 | `bun run scan:vendor` | The vendor-name scan (needs the word list; see below) |
 | `bun run smoke:live` | The live smoke test against the real API |
