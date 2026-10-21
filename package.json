@@ -17,7 +17,8 @@
     "check": "bun run typecheck && bun run test && bun run lint",
     "smoke:live": "bun run scripts/live-smoke.ts",
     "evals": "bun run scripts/agent-evals.ts",
-    "package:channels": "bun run scripts/package-channels.ts"
+    "package:channels": "bun run scripts/package-channels.ts",
+    "readme:art": "bun run scripts/readme-art.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.4.3",

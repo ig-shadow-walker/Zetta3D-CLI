@@ -1,6 +1,30 @@
-# Zetta 3D CLI
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.svg">
+    <img alt="Zetta 3D CLI — 3D generation from your terminal. Text, pictures and views to production-ready 3D, built for people and for AI agents." src="docs/assets/banner-light.svg" width="100%">
+  </picture>
+</p>
 
-`zetta` puts your whole Zetta 3D account in the terminal. Use it to:
+<p align="center">
+  <a href="docs/installation.md"><img alt="macOS, Linux and Windows" src="https://img.shields.io/badge/macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-15130F?style=flat-square&logo=gnubash&logoColor=FAF8F4"></a>
+  <a href="docs/installation.md"><img alt="One-line install, no dependencies" src="https://img.shields.io/badge/install-one%20line%2C%20no%20dependencies-15130F?style=flat-square"></a>
+  <a href="docs/ai-agents.md"><img alt="MCP server included" src="https://img.shields.io/badge/MCP-server%20included-1677FF?style=flat-square"></a>
+  <a href="docs/ai-agents.md"><img alt="Built for AI agents" src="https://img.shields.io/badge/built%20for-AI%20agents-1677FF?style=flat-square"></a>
+  <a href="docs/COMMANDS.md"><img alt="96 commands" src="https://img.shields.io/badge/commands-96-55514A?style=flat-square"></a>
+</p>
+
+<p align="center">
+  <a href="#install"><b>Install</b></a> ·
+  <a href="docs/getting-started.md"><b>Getting started</b></a> ·
+  <a href="docs/ai-agents.md"><b>AI agents &amp; MCP</b></a> ·
+  <a href="docs/COMMANDS.md"><b>Commands</b></a> ·
+  <a href="docs/README.md"><b>Docs</b></a> ·
+  <a href="https://zetta3d.ai"><b>zetta3d.ai</b></a>
+</p>
+
+<br>
+
+`zetta` puts your whole [Zetta 3D](https://zetta3d.ai) account in the terminal. Use it to:
 - make 3D models from text, a picture or several views;
 - refine them: retopology, segmentation, UVs, texturing, rigging and format conversion;
 - make and edit pictures, build Gaussian-splat worlds, and run multi-step pipelines;
@@ -18,6 +42,17 @@ zetta auth login
 zetta generate --image chair.png --engine n2.5 --max-credits 100 --out ./models
 ```
 
+<p align="center">
+  <img alt="A terminal session: pricing a model with --dry-run, generating it from a picture, rigging it as FBX, and exporting an STL locally" src="docs/assets/terminal.svg" width="860">
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/how-it-works-dark.svg">
+    <img alt="How it works: you or your AI agent call zetta from the shell or over MCP; zetta calls the Zetta 3D API; results come back as GLB, FBX, OBJ, STL, USDZ, glTF or PLY files" src="docs/assets/how-it-works-light.svg" width="100%">
+  </picture>
+</p>
+
 ---
 
 - [Install](#install)
@@ -25,6 +60,7 @@ zetta generate --image chair.png --engine n2.5 --max-credits 100 --out ./models
 - [Quick start](#quick-start)
 - [How it works](#how-it-works)
 - [Use it from AI agents](#use-it-from-ai-agents)
+- [Pipelines](#pipelines)
 - [Configuration](#configuration)
 - [Documentation](#documentation)
 - [Development](#development)
@@ -182,6 +218,22 @@ zetta skill install                       # just the skill (~/.claude/skills/zet
 - `--read-only` offers only tools that never change anything.
 
 The full agent guide is printed by `zetta guide`, and lives in [docs/ai-agents.md](docs/ai-agents.md) and [skill/SKILL.md](skill/SKILL.md).
+
+## Pipelines
+
+Pipelines are multi-step recipes, for example: picture → remove background → model → retopology → rig. They are the same pipelines as in the web editor, so a recipe built in either place opens in the other. From the terminal you write them as YAML, validate and price them, then run them over a whole folder.
+
+```bash
+zetta pipeline validate recipe.yaml && zetta pipeline create --file recipe.yaml
+zetta pipeline batch 12 ./photos --max-credits 3000      # one run per picture
+zetta run wait 88 --out ./out                            # collect every model
+```
+
+<p align="center">
+  <img alt="The same pipeline in the Zetta 3D web editor: a picture seed, Generate Smart 3D, retopology, Smart UV and auto rig, with the price per run" src="docs/assets/pipelines-editor.webp" width="860">
+</p>
+
+See [docs/pipelines.md](docs/pipelines.md).
 
 ## Configuration
 
