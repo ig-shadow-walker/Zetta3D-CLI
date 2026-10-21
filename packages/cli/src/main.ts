@@ -13,6 +13,14 @@ if (process.platform === 'win32' && isCompiledBinary()) {
   }
 }
 
+// `zetta … | head` closes the pipe early; that is a normal way to read output, not an error.
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EPIPE') process.exit(0)
+    throw error
+  })
+}
+
 const controller = new AbortController()
 let interrupted = false
 process.on('SIGINT', () => {
@@ -22,12 +30,10 @@ process.on('SIGINT', () => {
   process.stderr.write('\nStopping… (press Ctrl-C again to quit now). Jobs already started keep running on the server.\n')
 })
 
-const code = await runProgram(process.argv.slice(2), {
-  commands: COMMANDS,
-  groups: GROUPS,
-  intro: INTRO,
-  signal: controller.signal,
-})
-const args = process.argv.slice(2)
-if (args[0] !== 'mcp' && args[0] !== 'upgrade') await maybeNotifyUpdate()
-process.exitCode = code
+// No top-level await: release builds are compiled to bytecode, which needs a CommonJS-shaped entry.
+void (async () => {
+  const args = process.argv.slice(2)
+  const code = await runProgram(args, { commands: COMMANDS, groups: GROUPS, intro: INTRO, signal: controller.signal })
+  if (args[0] !== 'mcp' && args[0] !== 'upgrade') await maybeNotifyUpdate()
+  process.exitCode = code
+})()

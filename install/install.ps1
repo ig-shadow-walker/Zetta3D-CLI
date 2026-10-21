@@ -172,7 +172,23 @@
 
             Write-Step "Downloading zetta $version ($($name -replace '^zetta-|\.exe$', ''))..."
             $tmp = Join-Path $work 'zetta.exe'
-            if ((Get-Download "$base/v$version/$name" $tmp) -eq 404) { Fail "$base/v$version/$name was not found." }
+            $gzName = "$name.gz"
+            if ($sums.ContainsKey($gzName)) {
+                # The gzip copy is about half the size.
+                $gzTmp = "$tmp.gz"
+                if ((Get-Download "$base/v$version/$gzName" $gzTmp) -eq 404) { Fail "$base/v$version/$gzName was not found." }
+                $gzActual = (Get-FileHash -LiteralPath $gzTmp -Algorithm SHA256).Hash.ToLowerInvariant()
+                if ($gzActual -ne $sums[$gzName]) {
+                    Fail "checksum mismatch for $gzName (expected $($sums[$gzName]), got $gzActual). The download is corrupted or was tampered with. Nothing was installed."
+                }
+                $in = [System.IO.File]::OpenRead($gzTmp)
+                try {
+                    $gz = New-Object System.IO.Compression.GZipStream($in, [System.IO.Compression.CompressionMode]::Decompress)
+                    $out = [System.IO.File]::Create($tmp)
+                    try { $gz.CopyTo($out) } finally { $out.Dispose(); $gz.Dispose() }
+                } finally { $in.Dispose() }
+                Remove-Item -LiteralPath $gzTmp -Force -ErrorAction SilentlyContinue
+            } elseif ((Get-Download "$base/v$version/$name" $tmp) -eq 404) { Fail "$base/v$version/$name was not found." }
 
             $actual = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($actual -ne $sums[$name]) {

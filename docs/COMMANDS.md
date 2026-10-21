@@ -574,7 +574,7 @@ Kind: **spends credits** · MCP tool `refine_convert`
 | `--flatten-bottom` | boolean | Flatten the base (for printing or placing). |
 | `--flatten-threshold` | number | How much of the base to flatten. |
 | `--texture-size` | number | Texture size in pixels (128–4096). |
-| `--texture-format` | `JPEG` \| `PNG` \| `WEBP` \| `BMP` \| `DPX` \| `HDR` \| `OPEN_EXR` \| `TARGA` \| `TIFF` | Texture image format. |
+| `--texture-format` | string | Texture image format: JPEG, PNG, WEBP, BMP, DPX, HDR, OPEN_EXR, TARGA, TIFF (any case). |
 | `--pack-uv` | boolean | Pack UVs. |
 | `--vertex-colors` | boolean | Export vertex colours. |
 | `--pivot-bottom` | boolean | Put the pivot at the bottom centre. |
@@ -597,9 +597,9 @@ Your 3D library: list, inspect, wait, download, share, delete, import.
 
 ### `zetta asset export`
 
-Convert a GLB to OBJ (with materials and textures) or STL, locally and for free.
+Convert a GLB to OBJ, FBX (both with materials and textures) or STL, locally and for free.
 
-Works on a library asset or a local .glb file. For FBX, USDZ, 3MF or advanced options, use `zetta refine convert` (server-side).
+Works on a library asset or a local .glb file. For USDZ, 3MF or clean-up options, use `zetta refine convert` (server-side). Compressed geometry is refused here; convert those on the server.
 
 ```
 zetta asset export <source> [flags]
@@ -610,7 +610,8 @@ Kind: reads only · MCP tool `asset_export`
 | Argument / flag | Type | Description |
 |---|---|---|
 | `<source>` | string | An asset id, or a local .glb file. (**required**) |
-| `--format` | `obj` \| `stl` | Target format. (**required**) |
+| `--format` | `obj` \| `fbx` \| `stl` | Target format. (**required**) |
+| `--fbx-preset` | `unity` \| `unreal` \| `blender` \| `maya` \| `threejs` | With --format fbx: axes and units for this app (default unity). |
 | `--out` | string | Folder to save into. (default `.`) |
 
 Examples:
@@ -618,6 +619,7 @@ Examples:
 ```bash
 zetta asset export 1234 --format stl --out ./print
 zetta asset export ./chair.glb --format obj
+zetta asset export 1234 --format fbx --fbx-preset blender
 ```
 
 ### `zetta asset list`
@@ -1619,6 +1621,52 @@ Kind: local only · not an MCP tool
 |---|---|---|
 | `<name>` | string | Profile name. (**required**) |
 
+## skill
+
+Install the agent skill that teaches AI tools to use this CLI.
+
+### `zetta skill install`
+
+Install the Zetta 3D skill so AI agents (e.g. Claude Code) know how to use this CLI.
+
+Default: ~/.claude/skills/zetta3d/SKILL.md (all your projects). --project: ./.claude/skills/ (this repository). --dir: any skills folder.
+
+```
+zetta skill install [flags]
+```
+
+Kind: local only · not an MCP tool
+
+| Argument / flag | Type | Description |
+|---|---|---|
+| `--project` | boolean | Install for this project only (./.claude/skills). |
+| `--dir` | string | Install into this skills folder instead. |
+
+### `zetta skill uninstall`
+
+Remove the installed Zetta 3D skill.
+
+```
+zetta skill uninstall [flags]
+```
+
+Kind: local only · not an MCP tool
+
+| Argument / flag | Type | Description |
+|---|---|---|
+| `--project` | boolean | Remove it from this project (./.claude/skills). |
+| `--dir` | string | Remove it from this skills folder. |
+
+### `zetta skill show`
+
+Print the skill file (SKILL.md) for frameworks that load skills from elsewhere.
+
+```
+zetta skill show [flags]
+```
+
+Kind: local only · not an MCP tool
+
 ## Other commands
 
 ### `zetta generate`
@@ -1809,6 +1857,39 @@ Examples:
 ```bash
 zetta mcp --budget 500
 zetta mcp --read-only
+```
+
+### `zetta setup`
+
+Connect an AI tool to Zetta 3D: Claude Code, Claude Desktop, Cursor, Codex, or an AGENTS.md.
+
+claude-code     installs the skill and registers the MCP server (`claude mcp add`).
+claude-desktop  adds the MCP server to claude_desktop_config.json.
+cursor          adds the MCP server to ~/.cursor/mcp.json.
+codex           adds the MCP server to ~/.codex/config.toml and the guide to ~/.codex/AGENTS.md.
+agents-md       adds the guide to ./AGENTS.md (read by many coding agents).
+Existing files are backed up to .bak, and re-running replaces our entry instead of duplicating it.
+Without --budget, paid MCP tools need yes or maxCredits on every call.
+
+```
+zetta setup <client> [flags]
+```
+
+Kind: local only · not an MCP tool
+
+| Argument / flag | Type | Description |
+|---|---|---|
+| `<client>` | `claude-code` \| `claude-desktop` \| `cursor` \| `codex` \| `agents-md` | The AI tool to connect. (**required**) |
+| `--budget` | number | Credits each MCP session may spend without per-call confirmation. |
+| `--read-only` | boolean | Offer only read-only tools over MCP. |
+| `--print` | boolean | Show what would change, and change nothing. |
+
+Examples:
+
+```bash
+zetta setup claude-code --budget 500
+zetta setup claude-desktop --read-only
+zetta setup agents-md --print
 ```
 
 ### `zetta upgrade`

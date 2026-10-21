@@ -25,6 +25,7 @@ import { createHash } from 'node:crypto'
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
+import { gzipSync } from 'node:zlib'
 import {
   binaryName,
   formatChecksums,
@@ -101,7 +102,18 @@ export async function writeManifest(outdir: string, version: string): Promise<La
     const key = keyFromBinaryName(name)
     if (!key) continue
     const path = join(versionDir, name)
-    found.push({ key, file: { name, sha256: await sha256File(path), size: statSync(path).size } })
+    // A gzip copy for the installers and `zetta upgrade`: about half the download.
+    const gzPath = `${path}.gz`
+    writeFileSync(gzPath, gzipSync(readFileSync(path), { level: 9 }))
+    found.push({
+      key,
+      file: {
+        name,
+        sha256: await sha256File(path),
+        size: statSync(path).size,
+        gz: { name: `${name}.gz`, sha256: await sha256File(gzPath), size: statSync(gzPath).size },
+      },
+    })
   }
   if (found.length === 0) fail(`no zetta-* binaries in ${versionDir}`)
   const rank = (k: string) => (KEY_ORDER.includes(k) ? KEY_ORDER.indexOf(k) : KEY_ORDER.length)
@@ -112,7 +124,7 @@ export async function writeManifest(outdir: string, version: string): Promise<La
     released: releasedAt(),
     files: Object.fromEntries(found.map((f) => [f.key, f.file])),
   }
-  writeFileSync(join(versionDir, 'SHA256SUMS'), formatChecksums(found.map((f) => f.file)))
+  writeFileSync(join(versionDir, 'SHA256SUMS'), formatChecksums(found.flatMap((f) => (f.file.gz ? [f.file, f.file.gz] : [f.file]))))
   writeFileSync(join(outdir, 'latest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
   return manifest
 }
@@ -153,6 +165,8 @@ function build(entry: string, target: string, outfile: string, version: string):
     entry,
     '--compile',
     '--minify',
+    // Precompiled bytecode: start-up drops from ~37 ms to ~20 ms. Needs an entry without top-level await.
+    '--bytecode',
     // No source maps: they would carry the original sources, comments included.
     '--sourcemap=none',
     `--target=${target}`,

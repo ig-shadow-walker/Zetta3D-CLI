@@ -1,6 +1,5 @@
 import { z } from 'zod'
 import { defineCommand } from '../core/define'
-import { runMcpServer } from '../mcp/server'
 import { registry } from './meta'
 
 export const mcpCommand = defineCommand({
@@ -22,6 +21,8 @@ export const mcpCommand = defineCommand({
   }),
   examples: ['zetta mcp --budget 500', 'zetta mcp --read-only'],
   async run(ctx, input) {
+    // Loaded only here: the MCP library is the heaviest dependency and no other command needs it.
+    const { runMcpServer } = await import('../mcp/server')
     await runMcpServer({
       commands: registry.commands,
       globals: { profile: ctx.profileName, apiUrl: ctx.profile.apiUrl },

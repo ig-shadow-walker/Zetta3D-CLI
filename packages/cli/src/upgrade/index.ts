@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import { chmodSync, existsSync, readdirSync, realpathSync, renameSync, rmSync } from 'node:fs'
-import { open } from 'node:fs/promises'
+import { open, readFile, writeFile } from 'node:fs/promises'
+import { gunzipSync } from 'node:zlib'
 import { basename, dirname, join } from 'node:path'
 import { VERSION } from '../version'
 import {
@@ -146,7 +147,8 @@ async function resolveTarget(
       (k) => {
         const name = binaryName(k)
         const sha256 = sums.get(name)
-        return sha256 ? { name, sha256, size: -1 } : undefined
+        const gz = sums.get(`${name}.gz`)
+        return sha256 ? { name, sha256, size: -1, ...(gz ? { gz: { name: `${name}.gz`, sha256: gz, size: -1 } } : {}) } : undefined
       },
       key,
       version,
@@ -180,6 +182,22 @@ async function download(url: string, dest: string, fetchImpl: typeof fetch): Pro
     await fh.close()
   }
   return { sha256: hash.digest('hex'), size }
+}
+
+/** Downloads the gzip copy, checks its own checksum, and writes the unpacked binary to `dest`. */
+async function downloadGzip(url: string, gzSha256: string, dest: string, fetchImpl: typeof fetch): Promise<{ sha256: string; size: number }> {
+  const gzPath = `${dest}.gz`
+  try {
+    const packed = await download(url, gzPath, fetchImpl)
+    if (packed.sha256 !== gzSha256.toLowerCase()) {
+      throw new Error(`Checksum mismatch for ${url.split('/').pop()}: expected ${gzSha256}, got ${packed.sha256}. Nothing was changed.`)
+    }
+    const binary = gunzipSync(await readFile(gzPath))
+    await writeFile(dest, binary, { mode: 0o755 })
+    return { sha256: createHash('sha256').update(binary).digest('hex'), size: binary.byteLength }
+  } finally {
+    rmSync(gzPath, { force: true })
+  }
 }
 
 function permissionHint(err: unknown, path: string): Error {
@@ -276,7 +294,7 @@ export async function upgradeSelf(opts: UpgradeOptions = {}): Promise<UpgradeRes
     progress(`Downloading zetta ${next.version} (${key})...`)
     let got: { sha256: string; size: number }
     try {
-      got = await download(url, tmp, fetchImpl)
+      got = next.file.gz ? await downloadGzip(versionUrl(base, next.version, next.file.gz.name), next.file.gz.sha256, tmp, fetchImpl) : await download(url, tmp, fetchImpl)
     } catch (err) {
       throw permissionHint(err, target)
     }

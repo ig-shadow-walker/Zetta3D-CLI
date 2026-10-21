@@ -52,6 +52,7 @@ Serve these files over HTTPS. `.github/workflows/release.yml` uploads them in th
 | `v<version>/zetta-linux-x64-musl`, `zetta-linux-arm64-musl` | musl (Alpine) binaries | 〃 | 〃 |
 | `v<version>/zetta-windows-x64.exe` | binary | 〃 | 〃 |
 | `v<version>/zetta-*-baseline[.exe]` | x64 builds for CPUs without AVX2 (release builds include them) | 〃 | 〃 |
+| `v<version>/<binary>.gz` | gzip copy of each binary (about 40% of the size); the installers and `zetta upgrade` prefer it | `application/octet-stream` (no `Content-Encoding`) | 〃 |
 | `v<version>/SHA256SUMS` | `<sha256>  <file>` per line (`sha256sum -c` format) | `text/plain; charset=utf-8` | immutable |
 | `latest.json` | pointer to the newest **stable** release (format below) | `application/json` | short, e.g. `public, max-age=60` |
 | `install.sh`, `install.ps1` | copies of this folder's scripts | `text/plain; charset=utf-8` | short, e.g. `max-age=300` |
@@ -59,7 +60,7 @@ Serve these files over HTTPS. `.github/workflows/release.yml` uploads them in th
 Rules:
 - A `v<version>/` folder never changes after it is published. Only `latest.json` moves, and it is uploaded last.
 - Prereleases (`v1.2.0-beta.1`) get their folder but do not move `latest.json`. Install one with `ZETTA_VERSION=1.2.0-beta.1`.
-- Each binary is 60–85 MB uncompressed: the Bun runtime is inside. Gzip would roughly halve that if bandwidth matters later.
+- Each binary is 65–90 MB uncompressed (the Bun runtime is inside); the `.gz` copies the installers download are 27–41 MB. Serve the `.gz` files as plain bytes: the installers unpack them themselves, so the host must not add `Content-Encoding: gzip`.
 
 `latest.json` (shared by the installers and `zetta upgrade`; produced by `scripts/build-binaries.ts`):
 
@@ -68,14 +69,15 @@ Rules:
   "version": "0.2.0",
   "released": "2026-10-21T09:00:00.000Z",
   "files": {
-    "darwin-arm64": { "name": "zetta-darwin-arm64", "sha256": "…64 hex…", "size": 62226930 },
+    "darwin-arm64": { "name": "zetta-darwin-arm64", "sha256": "…64 hex…", "size": 67857522,
+                      "gz": { "name": "zetta-darwin-arm64.gz", "sha256": "…", "size": 28265511 } },
     "linux-x64-musl": { "name": "zetta-linux-x64-musl", "sha256": "…", "size": 75286064 },
     "windows-x64": { "name": "zetta-windows-x64.exe", "sha256": "…", "size": 86087168 }
   }
 }
 ```
 
-Keys are `<os>-<arch>[-musl][-baseline]`. The shell and PowerShell installers read only `version` from this file and take checksums from `v<version>/SHA256SUMS`, so a pinned `ZETTA_VERSION` works the same way.
+Keys are `<os>-<arch>[-musl][-baseline]`. `gz` is optional; without it clients download the plain binary. Both the `.gz` and the unpacked binary are checked against `SHA256SUMS`. The shell and PowerShell installers read only `version` from this file and take checksums from `v<version>/SHA256SUMS`, so a pinned `ZETTA_VERSION` works the same way.
 
 ### 2. `zetta3d.ai/install.sh` and `zetta3d.ai/install.ps1`
 

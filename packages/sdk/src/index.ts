@@ -28,6 +28,6 @@ export {
 export * from './files'
 export type * from './types'
 export { TERMINAL_STATUSES } from './types'
-export { glbToObj, glbToStl, parseGlb, collectParts, type ExportedFile } from './export'
+export { glbToObj, glbToStl, parseGlb, collectParts, collectMaterials, type ExportedFile, type MaterialInfo, type MeshPart } from './export'
 export * from './builders'
 export * as pipeline from './pipeline'

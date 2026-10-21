@@ -341,8 +341,25 @@ main() {
 
 	say "Downloading zetta $z_version for $z_key..."
 	z_tmp="$z_work/zetta"
-	fetch "$z_base/v$z_version/$z_name" "$z_tmp" progress ||
-		err "could not download $z_base/v$z_version/$z_name$(why). Check your internet connection and try again."
+	# The gzip copy is about half the size; use it when this system can unpack it.
+	z_gz_expected=""
+	if has gzip; then
+		z_gz_expected=$(awk -v n="$z_name.gz" '$2 == n || $2 == "*" n { print $1; exit }' "$z_work/SHA256SUMS" | tr 'A-F' 'a-f')
+	fi
+	if [ -n "$z_gz_expected" ]; then
+		fetch "$z_base/v$z_version/$z_name.gz" "$z_tmp.gz" progress ||
+			err "could not download $z_base/v$z_version/$z_name.gz$(why). Check your internet connection and try again."
+		z_actual=$(sha256_of "$z_tmp.gz" | tr 'A-F' 'a-f')
+		if [ "$z_actual" != "$z_gz_expected" ]; then
+			err "checksum mismatch for $z_name.gz (expected $z_gz_expected, got $z_actual).
+The download is corrupted or was tampered with. Nothing was installed."
+		fi
+		gzip -dc "$z_tmp.gz" >"$z_tmp" || err "could not unpack $z_name.gz."
+		rm -f "$z_tmp.gz"
+	else
+		fetch "$z_base/v$z_version/$z_name" "$z_tmp" progress ||
+			err "could not download $z_base/v$z_version/$z_name$(why). Check your internet connection and try again."
+	fi
 
 	z_actual=$(sha256_of "$z_tmp" | tr 'A-F' 'a-f')
 	if [ "$z_actual" != "$z_expected" ]; then

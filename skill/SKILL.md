@@ -66,8 +66,8 @@ Jobs take 30 s to several minutes. Shells time out, so:
     zetta refine rig 124 --rig-type biped --rig-format fbx --max-credits 60 --out ./out
     # Retexture from a description
     zetta refine texture 123 --prompt "weathered bronze" --tier hd --max-credits 80
-    # Free local export
-    zetta asset export 123 --format stl --out ./print
+    # Free local export (obj, fbx or stl)
+    zetta asset export 123 --format fbx --out ./out
     # Pictures
     zetta image generate -p "a brass desk lamp, studio light" --for-3d --out ./refs
     # Many inputs at once: a pipeline batch (see `zetta pipeline schema` for the YAML format)
@@ -87,4 +87,4 @@ Jobs take 30 s to several minutes. Shells time out, so:
 `zetta mcp --budget 500` serves every command as an MCP tool with the same checks; the budget
 caps what the session may spend.
 
-Full command reference: run `zetta commands --json`, or see docs/COMMANDS.md.
+Full command reference: run `zetta commands --json` (or `zetta <command> --help`).

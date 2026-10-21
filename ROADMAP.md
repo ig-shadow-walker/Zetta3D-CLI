@@ -15,49 +15,53 @@ v1 is done when:
 
 ## Build status (2026-10-21)
 
-**Built and tested (against a simulated API — nothing has run against a real account yet):**
+All six phases are built. Only the parts that need the owner are left: a real account, hosting, secrets, certificates and publishing. Everything is tested against simulated APIs and real local runs. Against production, only the public routes have been exercised.
+
+**Built and tested:**
 
 - **SDK** (`packages/sdk`, no runtime dependencies):
-  - typed client for every endpoint in the coverage matrix;
-  - one error type;
-  - ticketed uploads (single and multipart, ticket refresh);
-  - job and run polling;
-  - local GLB → OBJ/STL export;
-  - the ported 3D request rules (`builders/`);
-  - the pipeline graph model with a friendly YAML/JSON recipe format (`pipeline/`).
-- **CLI** (`packages/cli`): 92 commands across auth, account, billing, catalog, generate, splat, refine, asset, image, pipeline, run, config and meta. The design principles below are implemented:
-  - JSON when piped;
-  - one error envelope, with exit codes;
-  - the spend guard;
-  - idempotency keys;
-  - `--input` JSON;
-  - `zetta commands` and `zetta schema`.
-- **Sign-in:** browser hand-off (`client=cli`), emailed link, token on stdin, and `ZETTA_TOKEN`. Tokens are kept in the OS keychain, with a file fallback.
+  - typed client for every endpoint in the coverage matrix, and one error type;
+  - ticketed uploads (single and multipart, ticket refresh) and job/run polling;
+  - the ported 3D request rules (`builders/`) and the pipeline graph model with a YAML recipe format (`pipeline/`);
+  - the local GLB parser and the OBJ and STL writers.
+- **CLI** (`packages/cli`): 96 commands, following every design principle below:
+  - JSON when piped, one error envelope, exit codes;
+  - the spend guard and idempotency keys;
+  - `--input` JSON, `zetta commands` and `zetta schema`.
+- **Local export:** GLB → OBJ, STL and FBX (verified by reading four sample models back with three.js).
+- **Sign-in:** browser hand-off (`client=cli`), emailed link, token on stdin, and `ZETTA_TOKEN`. The keychain is used where one exists and probed by `doctor`; otherwise a `0600` file.
 - **Agents:**
-  - `zetta mcp` (stdio MCP server with per-session budget, read-only mode);
-  - `zetta guide`;
-  - `skill/SKILL.md`;
-  - `docs/COMMANDS.md`, generated from the definitions.
+  - `zetta mcp`, tested through the official MCP client over stdio: budget, read-only, dry runs and errors;
+  - `zetta skill install|uninstall|show` and `zetta setup claude-code|claude-desktop|cursor|codex|agents-md`;
+  - `zetta guide`, `skill/SKILL.md`, and `docs/COMMANDS.md` generated from the definitions;
+  - the agent-eval harness (`bun run evals`, `evals/tasks.yaml`).
 - **Distribution:**
-  - single-binary builds for every platform (`bun run build`);
-  - `install/install.sh` and `install.ps1`;
-  - `zetta upgrade` and a daily update notice;
-  - CI and release workflows;
-  - the vendor-name scan (`bun run scan:vendor`).
-- **Tests:** about 1,030, covering the SDK, the request-rule ports (parity with the web app), the pipeline module, and every CLI command group end to end with a fake API.
+  - single binaries for 7 platforms (plus `-baseline` for CPUs without AVX2), compiled to bytecode: about 16 ms to start, down from 37 ms;
+  - gzip copies that the installers and `zetta upgrade` prefer (27–41 MB, down from 66–89 MB), each checksum-checked twice;
+  - `install.sh` and `install.ps1` (27 end-to-end checks), `zetta upgrade`, and a daily update notice;
+  - npm packages and the Homebrew formula (`bun run package:channels`; npm verified with a local install);
+  - CI and release workflows, with npm, Homebrew, upload and signing steps that stay off until configured;
+  - the vendor-name scan of sources, the bundled code and the binaries.
+- **Verified for real:**
+  - all four Linux builds run in Debian and Alpine containers (x64 and arm64), including FBX export and reaching the API;
+  - the live smoke test passes its public checks against production;
+  - the API refuses a fake token correctly, which confirms the sign-in header reaches it.
+- **Docs:** README plus 14 guides in `docs/`: installation, getting started, authentication, generating, refining, library, images, pipelines, AI agents, configuration, troubleshooting, development, releasing, and the generated command reference.
+- **Tests:** 1,052 in the repo, plus the installer end-to-end script.
+- **B1** is done in `Zetta3D-Frontend`: the sign-in page names the CLI and says "ran `zetta auth login`", with the Blender and Unity wording unchanged and pinned by tests. It is uncommitted, waiting for review.
 
 **Not done — needs the owner:**
-- A real-account smoke test. It needs a test account and a token, plus the owner's go-ahead to spend a few credits.
-- Hosting `downloads.zetta3d.ai/cli` and serving `zetta3d.ai/install.sh` and `install.ps1` (see `install/README.md`).
-- Code-signing certificates (Apple, Windows), and the CI secrets: `ZETTA_VENDOR_WORDS` and the storage keys.
-- Publishing: GitHub releases, Homebrew tap, npm.
-- B1: the `/plugin-auth` page still shows Blender wording for `client=cli`.
-- The backend items below, especially B3–B5 before a public launch, and B15–B23 found by the 2026-10-21 audit.
+- **A run with a real account:** `ZETTA_TOKEN=… bun run smoke:live`, then `--paid --budget 200`, then `bun run evals`.
+- **Hosting:** `downloads.zetta3d.ai/cli`, plus serving `zetta3d.ai/install.sh` and `install.ps1` (see `install/README.md`).
+- **Secrets and accounts:** the CI secrets and variables (see `docs/releasing.md`), code-signing certificates, the `@zetta3d` npm organisation and the Homebrew tap repository.
+- **Ship B1:** commit and deploy the frontend change.
+- **Backend items** below: B3–B5 before a public launch, and B15–B26 from the audit.
 
 **Deliberately left out of v1:**
 - `agent chat`: the calling AI is the agent, and those routes still return model ids and token counts (B15).
 - `admin` commands: internal build only.
 - The browser-only geometry and material editors.
+- Headless rendering of model views: `auto-tag` and `rig-check` use the thumbnail, or pictures passed with `--frame`.
 
 ## What exists today (survey, 2026-10-20)
 
@@ -215,7 +219,7 @@ zetta splat     create --image … | --video … | --prompt … [--world-view <a
 zetta refine    retopo | segment | uv | texture | rig | convert   <asset-id|file.glb|url> [tool options]
 
 zetta asset     list | get | wait | download | rename | tag | share | unshare | cancel | delete
-                import <file.glb> | export <asset|file.glb> --format obj|stl | auto-tag | rig-check | featured
+                import <file.glb> | export <asset|file.glb> --format obj|fbx|stl | auto-tag | rig-check | featured
 zetta image     generate | edit | compose | list | get | download | delete | remove-bg
 
 zetta pipeline  list | get | schema | validate | estimate | create | update | duplicate | delete | runs | run | batch
@@ -223,6 +227,8 @@ zetta run       get | wait | outputs | start | pause | resume | continue | cance
                 step-run | step-retry | confirm-parts | delete
 
 zetta config    list | get | set | unset | profiles | add-profile | remove-profile | use
+zetta skill     install | uninstall | show
+zetta setup     claude-code | claude-desktop | cursor | codex | agents-md
 zetta commands | schema <cmd> | guide | exit-codes | doctor | completion <shell> | mcp | upgrade
 ```
 
@@ -420,7 +426,7 @@ These are changes in the other repos. Some improve the CLI; others are needed be
 
 | # | Change | Why | Needed by |
 |---|---|---|---|
-| B1 | Add `cli` to the `/plugin-auth` client wording (`plugin-client.ts`) | Otherwise the page says "Blender" | Phase 1 (cosmetic) |
+| B1 | Add `cli` to the `/plugin-auth` client wording (`plugin-client.ts`) (**done 2026-10-21 in the frontend working tree; commit and deploy**) | Otherwise the page says "Blender" | Phase 1 (cosmetic) |
 | B2 | Optional: let `/auth/verify` return a plugin token in the response body | Saves reading `Set-Cookie` in the headless flow | Phase 1 (nice to have) |
 | B3 | API keys: hashed, named, scoped (read / generate / billing), revocable, with last-used time and per-key rate limits; a page under `/developers` | CI and long-running agents. `content/legal.ts` already mentions per-key logging and limits. | GA |
 | B4 | OAuth device-code flow, with short-lived access tokens and refresh tokens (as `ENGINE_DESKTOP.md` §3 plans) | Clean login over SSH, in containers and for remote agents | GA |
@@ -460,6 +466,8 @@ These are changes in the other repos. Some improve the CLI; others are needed be
 ## Decisions
 
 Decisions 1–4 were taken as recommended on 2026-10-21 (Bun replaced pnpm as the toolchain). Decision 5 is still open.
+
+**Rust rewrite: rejected (2026-10-21).** Measured: start-up is about 16 ms after the bytecode build, against 150–280 ms per API call and minutes per job. A Rust port would only win on download size, and would add a third hand-kept copy of the web Studio's request rules. Revisit after the backend owns those rules (B6/B9): the client then becomes thin, and a small native client becomes cheap.
 
 1. **Spend policy for agents.** The in-app 3D Agent never spends credits without a click; the CLI will.
    - Recommended: quote first. Without a terminal, require `--yes` or a budget (`--max-credits`, `spend.maxPerCommand`). Give `zetta mcp` its own budget.

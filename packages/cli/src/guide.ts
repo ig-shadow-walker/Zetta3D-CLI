@@ -62,8 +62,8 @@ Jobs take 30 s to several minutes. Shells time out, so:
     zetta refine rig 124 --rig-type biped --rig-format fbx --max-credits 60 --out ./out
     # Retexture from a description
     zetta refine texture 123 --prompt "weathered bronze" --tier hd --max-credits 80
-    # Free local export
-    zetta asset export 123 --format stl --out ./print
+    # Free local export (obj, fbx or stl)
+    zetta asset export 123 --format fbx --out ./out
     # Pictures
     zetta image generate -p "a brass desk lamp, studio light" --for-3d --out ./refs
     # Many inputs at once: a pipeline batch (see \`zetta pipeline schema\` for the YAML format)
@@ -83,3 +83,23 @@ Jobs take 30 s to several minutes. Shells time out, so:
 \`zetta mcp --budget 500\` serves every command as an MCP tool with the same checks; the budget
 caps what the session may spend.
 `
+
+export const SKILL_NAME = 'zetta3d'
+
+export const SKILL_DESCRIPTION =
+  'Make and edit 3D models with the Zetta 3D CLI — text or pictures to 3D, retopology, segmentation, UVs, texturing, rigging, format conversion, splat worlds, image generation and pipelines. Use when the user wants a 3D asset made, changed, downloaded or exported, or asks about their Zetta 3D account, credits or library.'
+
+/** SKILL.md as agent frameworks expect it: front matter, then the guide. */
+export function skillMarkdown(): string {
+  return [
+    '---',
+    `name: ${SKILL_NAME}`,
+    `description: ${SKILL_DESCRIPTION}`,
+    '---',
+    '',
+    AGENT_GUIDE.trim(),
+    '',
+    'Full command reference: run `zetta commands --json` (or `zetta <command> --help`).',
+    '',
+  ].join('\n')
+}

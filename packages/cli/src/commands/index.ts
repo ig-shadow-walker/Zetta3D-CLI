@@ -12,6 +12,7 @@ import { runCommands } from './run'
 import { splatCommands } from './splat'
 import { upgradeCommand } from './upgrade'
 import { imageCommands } from './image'
+import { integrationCommands } from './integrations'
 import { mcpCommand } from './mcp'
 import { metaCommands, registry } from './meta'
 
@@ -27,6 +28,7 @@ export const GROUPS: GroupInfo[] = [
   { name: 'pipeline', summary: 'Saved multi-step recipes: create, validate, estimate, run, batch.' },
   { name: 'run', summary: 'Pipeline runs: watch, start, pause, retry steps, collect outputs.' },
   { name: 'config', summary: 'Settings and profiles.' },
+  { name: 'skill', summary: 'Install the agent skill that teaches AI tools to use this CLI.' },
 ]
 
 export const COMMANDS: AnyCommand[] = [
@@ -44,6 +46,7 @@ export const COMMANDS: AnyCommand[] = [
   ...configCommands,
   ...metaCommands,
   mcpCommand,
+  ...integrationCommands,
   upgradeCommand,
 ]
 

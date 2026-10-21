@@ -280,7 +280,7 @@ export const refineConvert = defineCommand({
     flattenBottom: z.boolean().optional().describe('Flatten the base (for printing or placing).'),
     flattenThreshold: z.number().optional().describe('How much of the base to flatten.'),
     textureSize: z.number().int().min(128).max(4096).optional().describe('Texture size in pixels (128–4096).'),
-    textureFormat: z.enum(CONVERT_TEXTURE_FORMATS).optional().describe('Texture image format.'),
+    textureFormat: z.string().optional().describe(`Texture image format: ${CONVERT_TEXTURE_FORMATS.join(', ')} (any case).`),
     packUv: z.boolean().optional().describe('Pack UVs.'),
     vertexColors: z.boolean().optional().describe('Export vertex colours.'),
     pivotBottom: z.boolean().optional().describe('Put the pivot at the bottom centre.'),
@@ -294,6 +294,10 @@ export const refineConvert = defineCommand({
   async run(ctx, input) {
     const to = input.to.toUpperCase()
     if (!(CONVERT_FORMATS as readonly string[]).includes(to)) throw usageError(`--to must be one of: ${CONVERT_FORMATS.join(', ')}.`)
+    const textureFormat = input.textureFormat?.toUpperCase().replace(/^JPG$/, 'JPEG').replace(/^EXR$/, 'OPEN_EXR').replace(/^TGA$/, 'TARGA')
+    if (textureFormat && !(CONVERT_TEXTURE_FORMATS as readonly string[]).includes(textureFormat)) {
+      throw usageError(`--texture-format must be one of: ${CONVERT_TEXTURE_FORMATS.join(', ')}.`)
+    }
     return runRefine(ctx, 'convert', input, pick({
       outputFormat: to,
       quad: input.quad,
@@ -302,7 +306,7 @@ export const refineConvert = defineCommand({
       flattenBottom: input.flattenBottom,
       flattenBottomThreshold: input.flattenThreshold,
       textureSize: input.textureSize,
-      textureFormat: input.textureFormat,
+      textureFormat,
       packUv: input.packUv,
       exportVertexColors: input.vertexColors,
       pivotToCenterBottom: input.pivotBottom,

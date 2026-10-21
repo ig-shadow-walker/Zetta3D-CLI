@@ -8,7 +8,7 @@ import { COMMANDS, GROUPS } from '../packages/cli/src/commands'
 import { fieldsOf, kebab, type AnyCommand } from '../packages/cli/src/core/define'
 import { EXIT_CODE_TABLE } from '../packages/cli/src/core/exit-codes'
 import { toolName } from '../packages/cli/src/mcp/server'
-import { AGENT_GUIDE } from '../packages/cli/src/guide'
+import { skillMarkdown } from '../packages/cli/src/guide'
 
 const KIND: Record<string, string> = {
   read: 'reads only',
@@ -70,17 +70,7 @@ out.push('## Other commands', '', ...topLevel.map(section))
 mkdirSync(join(import.meta.dir, '..', 'docs'), { recursive: true })
 writeFileSync(join(import.meta.dir, '..', 'docs', 'COMMANDS.md'), `${out.join('\n').replace(/\n{3,}/g, '\n\n')}\n`)
 
-const skill = [
-  '---',
-  'name: zetta3d',
-  'description: Make and edit 3D models with the Zetta 3D CLI — text or pictures to 3D, retopology, segmentation, UVs, texturing, rigging, format conversion, splat worlds, image generation and pipelines. Use when the user wants a 3D asset made, changed, downloaded or exported, or asks about their Zetta 3D account, credits or library.',
-  '---',
-  '',
-  AGENT_GUIDE.trim(),
-  '',
-  'Full command reference: run `zetta commands --json`, or see docs/COMMANDS.md.',
-  '',
-].join('\n')
+const skill = skillMarkdown()
 mkdirSync(join(import.meta.dir, '..', 'skill'), { recursive: true })
 writeFileSync(join(import.meta.dir, '..', 'skill', 'SKILL.md'), skill)
 console.log(`Wrote docs/COMMANDS.md (${COMMANDS.length} commands) and skill/SKILL.md.`)

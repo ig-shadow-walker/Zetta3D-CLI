@@ -1,85 +1,225 @@
 # Zetta 3D CLI
 
-`zetta` puts the whole Zetta 3D account in your terminal: make 3D models from text or pictures,
-refine them (retopology, segmentation, UVs, texturing, rigging, conversion), make pictures, build
-splat worlds, and run pipelines. It is built first for AI agents — JSON when piped, one error
-format, meaningful exit codes, a spend guard — and works just as well by hand.
+`zetta` puts your whole Zetta 3D account in the terminal. Use it to:
+- make 3D models from text, a picture or several views;
+- refine them: retopology, segmentation, UVs, texturing, rigging and format conversion;
+- make and edit pictures, build Gaussian-splat worlds, and run multi-step pipelines;
+- download or export the results.
+
+It is built first for AI agents, and works just as well by hand:
+- JSON output whenever it is piped, and one error format;
+- exit codes you can branch on;
+- an MCP server, and a skill file;
+- a spend guard, so nothing costs credits by accident.
+
+```bash
+curl -fsSL https://zetta3d.ai/install.sh | sh
+zetta auth login
+zetta generate --image chair.png --engine n2.5 --max-credits 100 --out ./models
+```
+
+---
+
+- [Install](#install)
+- [Sign in](#sign-in)
+- [Quick start](#quick-start)
+- [How it works](#how-it-works)
+- [Use it from AI agents](#use-it-from-ai-agents)
+- [Configuration](#configuration)
+- [Documentation](#documentation)
+- [Development](#development)
 
 ## Install
 
-One command, nothing else needed (the binary carries its own runtime):
+One command. Nothing else needs to be installed first: no Node, no Python, no package manager.
+
+**macOS and Linux**
 
 ```bash
 curl -fsSL https://zetta3d.ai/install.sh | sh
 ```
 
+**Windows (PowerShell)**
+
 ```powershell
 irm https://zetta3d.ai/install.ps1 | iex
 ```
 
-Then sign in:
+What the installer does:
+- picks the build for your system (macOS, Linux including Alpine, Windows; x64 or arm64);
+- checks its SHA-256 checksum;
+- installs it to `~/.zetta/bin` (Windows: `%LOCALAPPDATA%\zetta\bin`), without sudo;
+- adds that folder to your `PATH`.
+
+Run it again, or run `zetta upgrade`, to update.
+
+**Other ways to install** (available from the first public release):
+- **npm** (needs Node 18+): `npm install -g @zetta3d/cli`, or `npx @zetta3d/cli --help`.
+- **Homebrew:** `brew install zetta3d/tap/zetta`.
+
+Check the installation:
 
 ```bash
-zetta auth login
+zetta --version
+zetta doctor
 ```
 
-No browser on this machine (SSH, containers)? `zetta auth login --email you@example.com`, or set
-`ZETTA_TOKEN` (copy it with `zetta auth token` from a machine where you are signed in).
+More detail — pinned versions, CI, uninstalling, Alpine — is in [docs/installation.md](docs/installation.md).
 
-## Use it
+## Sign in
 
 ```bash
-zetta generate --image chair.png --engine n2.5 --dry-run        # price it
+zetta auth login                          # opens zetta3d.ai in your browser; click Connect
+```
+
+| Where you are | How to sign in |
+|---|---|
+| A laptop with a browser | `zetta auth login` |
+| SSH, a container, no browser | `zetta auth login --email you@example.com` — paste the link from the email (copy it; don't click it) |
+| CI, scripts, agents | Set `ZETTA_TOKEN`. Copy the value with `zetta auth token` on a machine where you are signed in |
+
+Where the token is kept:
+- **Storage:** in the system keychain (macOS Keychain, Windows Credential Manager or libsecret). Where there is none, it goes in a `0600` file instead.
+- **Check it:** `zetta auth status` shows who you are and when the token expires.
+- **Treat it like a password.** Tokens last 30 days and cannot be revoked yet.
+
+See [docs/authentication.md](docs/authentication.md).
+
+## Quick start
+
+```bash
+# What do I have?
+zetta account credits                     # 3D credits (1 credit = €0.01) and AI tokens
+zetta catalog entitlements                # what your plan allows
+zetta catalog engines                     # engines and their limits
+
+# A model from a picture: price it, then make it and download it
+zetta generate --image chair.png --engine n2.5 --dry-run
 zetta generate --image chair.png --engine n2.5 --max-credits 100 --out ./models
-zetta refine rig 1234 --rig-type biped --rig-format fbx --yes --out ./models
+
+# A model from text
+zetta generate -p "a stylised wooden treasure chest" --quality lowpoly --yes --wait
+
+# Your library
 zetta asset list
-zetta asset export 1234 --format stl --out ./print              # free, local
-zetta image generate -p "a brass desk lamp" --for-3d --out ./refs
+zetta asset download 1234 --format glb --out ./models
+
+# Finishing tools
+zetta refine retopo 1234 --faces 5000 --yes --wait
+zetta refine rig 1235 --rig-type biped --rig-format fbx --yes --out ./models
+
+# Free local conversion
+zetta asset export 1234 --format stl --out ./print
+
+# Pictures
+zetta image generate -p "a brass desk lamp, studio light" --for-3d --out ./refs
 ```
 
-- `zetta --help` and `zetta <command> --help` for flags.
-- `zetta guide` — how agents should use the CLI.
-- `zetta commands --json` — every command and flag, machine-readable; `zetta schema <command>` for one command's JSON Schema.
-- Full reference: [docs/COMMANDS.md](docs/COMMANDS.md).
+The full walkthrough is in [docs/getting-started.md](docs/getting-started.md), and every command is in [docs/COMMANDS.md](docs/COMMANDS.md).
 
-## For AI agents
+## How it works
 
-- Output is JSON whenever stdout is not a terminal. Errors are JSON on stderr with a `code`, a `hint` naming the next step, and an `exitCode`.
-- Paid commands quote first. `--dry-run` shows the price; `--max-credits N` or `--yes` spends. Without either, nothing is spent (exit 5).
-- Jobs return at once with an id. `zetta asset wait <id> --timeout 90s` waits in short steps (exit 10 = still running).
-- `--idempotency-key` makes retries free of double charges. `--input '<json>'` passes all inputs as JSON.
-- Skill file for agent frameworks: [skill/SKILL.md](skill/SKILL.md).
+**Assets.** Every model you make, refine or import is an *asset* in your library. Each has a numeric id, a status (`queued`, `processing`, `success`, `failed`, …) and result files (GLB, FBX, OBJ, USDZ, PLY, …).
 
-### MCP
+**Engines.** These are Zetta's models:
+
+| Engine | What it is for | Plans |
+|---|---|---|
+| `n1` | Text, a picture or several views to 3D | All |
+| `n2.5` | Picture or several views to 3D; parts, quads, Ultra detail | Paid |
+| `np1`, `np1.5` | Smart 3D; up to 8K textures | Paid |
+| `r1` | Retopology | Paid |
+| `splat`, `splat2`, `splat2.1` | Gaussian-splat objects and worlds | Early access |
+
+`zetta catalog engines` lists what each one supports.
+
+**Credits and the spend guard.** Paid commands always check the price first.
+- `--dry-run` shows the price and spends nothing.
+- `--max-credits N` spends only if the price is at most N.
+- `--yes` spends without asking.
+- In a terminal without either flag, you are asked. Without a terminal, the command refuses and exits with code 5. Nothing is ever spent by accident.
+
+Failed jobs are refunded automatically.
+
+**Jobs run on the server.** A paid command returns at once with the asset id:
+- `--wait` waits for the job to finish;
+- `--out <folder>` waits, then downloads the files;
+- `zetta asset wait <id>` picks up waiting later.
+
+If you set `--timeout`, the command exits with code 10 when that time runs out. The job keeps running.
+
+**Inputs.** Wherever a picture is expected you can give:
+- a local file (PNG, JPEG or WebP, 128–5000 px, up to 8 MB);
+- an `https://` URL;
+- `image:<id>`, a picture from your image library.
+
+Models can be an asset id, a local `.glb` file, or a URL. The CLI uploads local files for you.
+
+## Use it from AI agents
+
+`zetta` was designed for agents such as Claude Code, Codex, Cursor and CI scripts.
+
+**Contract:**
+- **Output:** stdout is JSON whenever it is not a terminal; diagnostics go to stderr.
+- **Errors:** always `{"error":{"code","message","details","hint","exitCode"}}`. The `hint` names the next command to run.
+- **Exit codes:** 0 ok · 2 fix the input · 3 sign in · 4 plan does not allow it · 5 credits or spend limit · 6 not found · 7 conflict · 8 rate limited · 9 job failed · 10 still running · 11 network or server.
+- **Self-describing:** `zetta commands --json` lists every command and flag, and `zetta schema <command>` gives its JSON Schema. `--input '<json>'` passes all of a command's inputs as one JSON object.
+- **Safe retries:** `--idempotency-key <key>` makes a retry free of double charges.
+
+**Connect your tool in one command:**
 
 ```bash
-claude mcp add zetta3d -- zetta mcp --budget 500
+zetta setup claude-code --budget 500      # skill + MCP server for Claude Code
+zetta setup claude-desktop                # MCP server for Claude Desktop
+zetta setup cursor                        # MCP server for Cursor
+zetta setup codex                         # MCP server + guide for Codex
+zetta setup agents-md                     # guide in ./AGENTS.md for any agent
+zetta skill install                       # just the skill (~/.claude/skills/zetta3d)
 ```
 
-Every command becomes an MCP tool with the same checks. `--budget` caps the session's spend;
-`--read-only` offers only tools that never change anything.
+**MCP:** `zetta mcp` serves every command as an MCP tool, with the same checks.
+- `--budget N` caps what a session may spend.
+- `--read-only` offers only tools that never change anything.
 
-## Exit codes
-
-0 ok · 1 unexpected · 2 bad input · 3 not signed in · 4 plan/access · 5 credits/spend limit ·
-6 not found · 7 conflict/concurrency · 8 rate limited · 9 job failed · 10 still running · 11 network/server
+The full agent guide is printed by `zetta guide`, and lives in [docs/ai-agents.md](docs/ai-agents.md) and [skill/SKILL.md](skill/SKILL.md).
 
 ## Configuration
 
-`zetta config list` shows everything. Useful settings:
-
 ```bash
-zetta config set spend.maxPerCommand 200    # agents may spend up to 200 credits per command without --yes
-zetta config set defaults.wait true         # wait for jobs unless --no-wait
+zetta config list
+zetta config set spend.maxPerCommand 200   # agents may spend up to 200 credits per command
+zetta config set defaults.wait true        # wait for jobs unless --no-wait
+zetta config set output json               # always JSON
+zetta --profile local asset list           # built-in profile for a local backend
 zetta config add-profile staging --api https://staging-api.example.com/api --site https://staging.example.com
-zetta --profile local asset list            # built-in profile for a local backend
 ```
 
-Environment: `ZETTA_TOKEN`, `ZETTA_PROFILE`, `ZETTA_API_URL`, `ZETTA_SITE_URL`, `ZETTA_OUTPUT`,
-`ZETTA_CONFIG_DIR`, `ZETTA_NO_KEYCHAIN=1`, `ZETTA_NON_INTERACTIVE=1`, `NO_COLOR`.
+**Environment variables:**
+- `ZETTA_TOKEN`, `ZETTA_PROFILE`, `ZETTA_API_URL`, `ZETTA_SITE_URL`
+- `ZETTA_OUTPUT`, `ZETTA_CONFIG_DIR`
+- `ZETTA_NO_KEYCHAIN=1`, `ZETTA_NON_INTERACTIVE=1`, `ZETTA_NO_UPDATE_CHECK=1`
+- `NO_COLOR`
 
-Tokens are stored in the system keychain where available, otherwise in a `0600` file in the
-config folder. Tokens cannot be revoked server-side yet: treat them like passwords.
+See [docs/configuration.md](docs/configuration.md).
+
+## Documentation
+
+| Guide | What is in it |
+|---|---|
+| [Installation](docs/installation.md) | Every install method, updating, uninstalling, CI, Alpine and old CPUs |
+| [Getting started](docs/getting-started.md) | From sign-in to a downloaded model, step by step |
+| [Authentication](docs/authentication.md) | Sign-in methods, tokens, keychain, profiles, CI |
+| [Generating models](docs/generating.md) | Text, picture and multi-view to 3D, every option, splat worlds |
+| [Refining models](docs/refining.md) | Retopology, segmentation, UVs, texturing, rigging, conversion, local export |
+| [Your library](docs/library.md) | Listing, waiting, downloading, sharing, tagging, importing, deleting |
+| [Images](docs/images.md) | Generating, editing and combining pictures; removing backgrounds |
+| [Pipelines](docs/pipelines.md) | Recipes in YAML, validating, pricing, running and batching |
+| [AI agents and MCP](docs/ai-agents.md) | The output contract, the spend guard, MCP, skills, setup per tool |
+| [Configuration](docs/configuration.md) | Settings, profiles, environment variables, output formats |
+| [Troubleshooting](docs/troubleshooting.md) | Every error code and what to do about it |
+| [Command reference](docs/COMMANDS.md) | Every command and flag (generated from the code) |
+| [Development](docs/development.md) | Architecture, tests, live smoke tests, agent evals |
+| [Releasing](docs/releasing.md) | Building, publishing and hosting a release |
 
 ## Development
 
@@ -87,18 +227,10 @@ config folder. Tokens cannot be revoked server-side yet: treat them like passwor
 bun install
 bun run zetta -- --help        # run from source
 bun run check                  # typecheck, tests, lint
-bun run build:local            # single binary for this machine → dist/
-bun run build                  # every platform
+bun run build:local            # a binary for this machine → dist/
 bun run docs:commands          # regenerate docs/COMMANDS.md and skill/SKILL.md
 ```
 
-Layout:
+Architecture, testing, the live smoke test and agent evals are in [docs/development.md](docs/development.md). Releases are in [docs/releasing.md](docs/releasing.md).
 
-- `packages/sdk` — typed API client, uploads, request builders, pipeline graph logic, local GLB export. No terminal or file-system code; no runtime dependencies.
-- `packages/cli` — commands (`src/commands`), the command framework (`src/core`), sign-in (`src/auth`), the MCP server (`src/mcp`), self-update (`src/upgrade`).
-- `install/` — the one-line installers. `scripts/` — builds, the vendor-name scan, docs.
-
-The CLI talks only to the Zetta 3D API and must never name a model vendor anywhere — code, output,
-docs or files. CI runs `bun run scan:vendor --require-list` with the word list kept in CI secrets.
-
-See [ROADMAP.md](ROADMAP.md) for the plan and status.
+The CLI talks only to the Zetta 3D API, and never names a model vendor anywhere: not in its code, output, docs or files. CI enforces this with `bun run scan:vendor --require-list --require-bundle`; the word list lives in CI secrets.

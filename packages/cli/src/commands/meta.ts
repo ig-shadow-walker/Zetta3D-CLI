@@ -143,8 +143,17 @@ export const doctorCommand = defineCommand({
         checks.push({ check: 'sign-in', ok: false, detail: `Token from ${stored.source} was refused: ${error instanceof Error ? error.message : String(error)}` })
       }
     }
-    const keychain = Boolean((globalThis as { Bun?: { secrets?: unknown } }).Bun?.secrets) && ctx.env.ZETTA_NO_KEYCHAIN !== '1'
-    checks.push({ check: 'keychain', ok: true, detail: keychain ? 'system keychain available' : 'using the credentials file (0600)' })
+    const secrets = (globalThis as { Bun?: { secrets?: { get(o: { service: string; name: string }): Promise<string | null> } } }).Bun?.secrets
+    let keychain = false
+    if (secrets && ctx.env.ZETTA_NO_KEYCHAIN !== '1') {
+      try {
+        await secrets.get({ service: 'zetta3d-cli', name: '__doctor_probe__' })
+        keychain = true
+      } catch {
+        // no secret service here (e.g. a container or a headless Linux box)
+      }
+    }
+    checks.push({ check: 'keychain', ok: true, detail: keychain ? 'system keychain available' : 'no system keychain here; tokens go to the credentials file (0600)' })
     const failing = checks.filter((c) => !c.ok)
     return { ok: failing.length === 0, checks, ...(failing.length ? { exitCode: 1 } : {}) }
   },

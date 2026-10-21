@@ -335,16 +335,17 @@ export const assetFeatured = defineCommand({
 
 export const assetExport = defineCommand({
   path: ['asset', 'export'],
-  summary: 'Convert a GLB to OBJ (with materials and textures) or STL, locally and for free.',
-  description: 'Works on a library asset or a local .glb file. For FBX, USDZ, 3MF or advanced options, use `zetta refine convert` (server-side).',
+  summary: 'Convert a GLB to OBJ, FBX (both with materials and textures) or STL, locally and for free.',
+  description: 'Works on a library asset or a local .glb file. For USDZ, 3MF or clean-up options, use `zetta refine convert` (server-side). Compressed geometry is refused here; convert those on the server.',
   kind: 'read',
   positionals: [{ name: 'source', required: true }],
   input: z.object({
     source: z.string().describe('An asset id, or a local .glb file.'),
-    format: z.enum(['obj', 'stl']).describe('Target format.'),
+    format: z.enum(['obj', 'fbx', 'stl']).describe('Target format.'),
+    fbxPreset: z.enum(['unity', 'unreal', 'blender', 'maya', 'threejs']).optional().describe('With --format fbx: axes and units for this app (default unity).'),
     out: z.string().default('.').describe('Folder to save into.'),
   }),
-  examples: ['zetta asset export 1234 --format stl --out ./print', 'zetta asset export ./chair.glb --format obj'],
+  examples: ['zetta asset export 1234 --format stl --out ./print', 'zetta asset export ./chair.glb --format obj', 'zetta asset export 1234 --format fbx --fbx-preset blender'],
   async run(ctx, input) {
     let data: Uint8Array
     let base: string
@@ -370,7 +371,12 @@ export const assetExport = defineCommand({
       base = basename(full).replace(/\.glb$/i, '')
     }
     ctx.out.progress({ stage: 'convert', message: `Converting to ${input.format.toUpperCase()}…` })
-    const files = input.format === 'obj' ? glbToObj(data, base) : glbToStl(data, base)
+    const files =
+      input.format === 'obj'
+        ? glbToObj(data, base)
+        : input.format === 'stl'
+          ? glbToStl(data, base)
+          : await (await import('../export/fbx')).glbToFbx(data, base, input.fbxPreset ?? 'unity')
     const dir = requireDir(input.out)
     const saved = files.map((file) => {
       const path = targetPath(dir, file.name, true)

@@ -263,3 +263,32 @@ export function glbToStl(data: Uint8Array, base = 'model'): ExportedFile[] {
   }
   return [{ name: `${base}.stl`, bytes: out }]
 }
+
+export interface MaterialInfo {
+  index: number
+  name: string
+  /** Base colour factor, RGBA in 0–1. */
+  color: [number, number, number, number]
+  /** The embedded base-colour picture, as stored (PNG, JPEG or WebP bytes). */
+  texture?: { bytes: Uint8Array; mimeType: string; extension: string }
+}
+
+/** Each material's base colour and embedded base-colour texture. */
+export function collectMaterials(glb: ParsedGlb): MaterialInfo[] {
+  return (glb.json.materials ?? []).map((material, index) => {
+    const [r, g, b, a] = material.pbrMetallicRoughness?.baseColorFactor ?? [1, 1, 1, 1]
+    const info: MaterialInfo = { index, name: material.name ?? `material${index}`, color: [r ?? 1, g ?? 1, b ?? 1, a ?? 1] }
+    const textureIndex = material.pbrMetallicRoughness?.baseColorTexture?.index
+    const image = textureIndex !== undefined ? glb.json.images?.[glb.json.textures?.[textureIndex]?.source ?? -1] : undefined
+    if (image?.bufferView !== undefined) {
+      const view = glb.json.bufferViews![image.bufferView]!
+      const mimeType = image.mimeType ?? 'image/png'
+      info.texture = {
+        bytes: glb.bin.slice(view.byteOffset ?? 0, (view.byteOffset ?? 0) + view.byteLength),
+        mimeType,
+        extension: mimeType === 'image/jpeg' ? 'jpg' : mimeType === 'image/webp' ? 'webp' : 'png',
+      }
+    }
+    return info
+  })
+}

@@ -20,6 +20,8 @@ export interface ManifestFile {
   sha256: string
   /** Size in bytes. */
   size: number
+  /** A gzip copy (about half the size), when the release has one. */
+  gz?: { name: string; sha256: string; size: number }
 }
 
 export interface LatestManifest {
@@ -138,6 +140,10 @@ export function parseManifest(data: unknown, source: string): LatestManifest {
       throw bad(`entry "${key}" has an unsafe file name`)
     }
     files[key] = { name: f.name, sha256: f.sha256.toLowerCase(), size: typeof f.size === 'number' ? f.size : -1 }
+    const gz = f.gz as Partial<ManifestFile> | undefined
+    if (gz && typeof gz.name === 'string' && gz.name === `${f.name}.gz` && typeof gz.sha256 === 'string' && /^[0-9a-fA-F]{64}$/.test(gz.sha256)) {
+      files[key]!.gz = { name: gz.name, sha256: gz.sha256.toLowerCase(), size: typeof gz.size === 'number' ? gz.size : -1 }
+    }
   }
   return { version, released: typeof obj.released === 'string' ? obj.released : '', files }
 }

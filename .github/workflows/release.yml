@@ -245,3 +245,78 @@ jobs:
               --content-type application/json --cache-control "public, max-age=60"
           fi
           # If a CDN sits in front of the bucket, purge latest.json here (placeholder).
+
+  # -----------------------------------------------------------------------------------------
+  # npm (`npx @zetta3d/cli`) and Homebrew (`brew install <tap>/zetta`). DISABLED BY DEFAULT.
+  # npm:      add the secret NPM_TOKEN and set the variable ZETTA_PUBLISH_NPM to "true".
+  # Homebrew: create the tap repository (e.g. zetta3d/homebrew-tap), add the secret
+  #           ZETTA_TAP_TOKEN (a token that can push to it), and set the variable
+  #           ZETTA_HOMEBREW_TAP to its name, e.g. "zetta3d/homebrew-tap".
+  # Both are built from the release files by scripts/package-channels.ts.
+  # -----------------------------------------------------------------------------------------
+  npm-publish:
+    name: Publish to npm
+    needs: [build, github-release]
+    if: ${{ vars.ZETTA_PUBLISH_NPM == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@v5
+        with:
+          name: zetta-release-${{ needs.build.outputs.version }}
+          path: dist
+      - run: bun run package:channels
+      - name: Publish (platform packages first, then the launcher)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          tag=latest
+          if [ "$PRERELEASE" = true ]; then tag=next; fi
+          for dir in dist/npm/cli-*/ dist/npm/cli/; do
+            (cd "$dir" && npm publish --access public --tag "$tag")
+          done
+
+  homebrew-tap:
+    name: Update the Homebrew tap
+    needs: [build, sync-download-host]
+    if: ${{ vars.ZETTA_HOMEBREW_TAP != '' && needs.build.outputs.prerelease != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@v5
+        with:
+          name: zetta-release-${{ needs.build.outputs.version }}
+          path: dist
+      - run: bun run package:channels
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ vars.ZETTA_HOMEBREW_TAP }}
+          token: ${{ secrets.ZETTA_TAP_TOKEN }}
+          path: tap
+      - name: Commit the formula
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p tap/Formula
+          cp dist/homebrew/zetta.rb tap/Formula/zetta.rb
+          cd tap
+          git config user.name "zetta-release"
+          git config user.email "release@zetta3d.ai"
+          git add Formula/zetta.rb
+          git commit -m "zetta $VERSION" || echo "Formula unchanged."
+          git push

@@ -1,0 +1,67 @@
+# Agent evals: can an AI agent with only the `zetta` CLI (and its skill) finish real tasks?
+#
+# Each task is given to the agent as a plain request, in an empty folder. After the agent stops,
+# the checks run. `paid: true` tasks spend real credits and only run with --paid; each is capped
+# by `maxCredits` (told to the agent) and verified from the account balance afterwards.
+#
+# Check types:
+#   answerMatches: <regex>        the agent's final answer matches (case-insensitive)
+#   fileGlob: <glob>              at least one file matches, relative to the task folder
+#   command: <zetta args>         `zetta <args>` exits with `exitCode` (default 0)
+#   noSpend: true                 the 3D credit balance did not change
+#   spendAtMost: <credits>        the balance dropped by at most this much
+
+- id: credits
+  prompt: How many 3D credits do I have left on Zetta 3D? Reply with just the number.
+  checks:
+    - answerMatches: '\b\d+\b'
+    - noSpend: true
+
+- id: plan-limits
+  prompt: Can my Zetta 3D plan make quad-topology models, and can I use the Zetta N2.5 engine? Answer in one sentence each.
+  checks:
+    - answerMatches: 'quad'
+    - answerMatches: 'n2\.5'
+    - noSpend: true
+
+- id: price-only
+  prompt: What would a textured Zetta N2.5 model of a wooden chair cost, made from a text prompt? Find the exact price but do not spend anything.
+  checks:
+    - answerMatches: '\d+\s*credits?'
+    - noSpend: true
+
+- id: pipeline-recipe
+  prompt: >-
+    Write a Zetta 3D pipeline recipe in recipe.yaml that removes the background from a picture,
+    makes a textured model with Zetta N2.5, and rigs it as a biped exported as FBX. Check that it
+    is valid with the CLI. Do not save it to my account and do not run it.
+  checks:
+    - fileGlob: recipe.yaml
+    - command: pipeline validate recipe.yaml
+    - noSpend: true
+
+- id: library-search
+  prompt: List my five most recent finished 3D models on Zetta 3D, with their ids and titles.
+  checks:
+    - answerMatches: '#?\d+'
+    - noSpend: true
+
+- id: text-to-model
+  paid: true
+  maxCredits: 100
+  prompt: >-
+    Make a 3D model of a simple coffee mug with Zetta 3D and save the GLB file into ./out.
+    Do not spend more than 100 credits.
+  checks:
+    - fileGlob: out/*.glb
+    - spendAtMost: 100
+
+- id: model-to-print
+  paid: true
+  maxCredits: 120
+  prompt: >-
+    Make a small low-poly 3D model of a chess pawn with Zetta 3D and give me an STL file for
+    3D printing in ./print. Keep the total under 120 credits.
+  checks:
+    - fileGlob: print/*.stl
+    - spendAtMost: 120

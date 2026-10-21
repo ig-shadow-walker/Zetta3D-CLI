@@ -256,6 +256,7 @@ async function installerChecks(label: string, run: (o: RunOpts) => Promise<Run>,
   const dir = join(tmp, `inst-${label}`, 'bin')
   const bin = installed(dir)
 
+  requests.length = 0
   let r = await run({ dir, viaCurl })
   const fresh = check(`[${label}] fresh install of the latest version exits 0`, r.status === 0, output(r))
   if (!fresh) return
@@ -264,6 +265,9 @@ async function installerChecks(label: string, run: (o: RunOpts) => Promise<Run>,
   check(`[${label}] success message points to \`zetta auth login\``, output(r).includes('zetta auth login'), output(r))
   check(`[${label}] no colour codes when not a terminal`, !output(r).includes('\x1b['), JSON.stringify(output(r)))
   check(`[${label}] no temp files left in the install dir`, strays(dir).length === 0, strays(dir).join(', '))
+  if (existsSync(`${binPath}.gz`)) {
+    check(`[${label}] downloads the gzip copy, not the full binary`, requests.some((p) => p.endsWith(`${binName}.gz`)) && !requests.some((p) => p.endsWith(`/${binName}`)), requests.filter((p) => p.includes('zetta-')).join(', '))
+  }
 
   r = await run({ dir, version })
   check(
