@@ -16,6 +16,7 @@ export interface ConfigFile {
   profiles?: Record<string, Partial<Profile>>
   output?: 'text' | 'json' | 'ndjson'
   defaults?: { wait?: boolean; engine?: string }
+  download?: { auto?: boolean; dir?: string; formats?: string[] }
   spend?: { maxPerCommand?: number | null; requireConfirm?: boolean }
 }
 
@@ -25,10 +26,16 @@ export const BUILT_IN_PROFILES: Record<string, Profile> = {
 }
 
 /** Settable keys, their types and what they do (used by `zetta config`). */
-export const CONFIG_KEYS: Record<string, { type: 'string' | 'number' | 'boolean' | 'enum'; values?: string[]; description: string }> = {
+export const CONFIG_KEYS: Record<string, { type: 'string' | 'number' | 'boolean' | 'enum' | 'list'; values?: string[]; description: string }> = {
   output: { type: 'enum', values: ['text', 'json', 'ndjson'], description: 'Default output format (otherwise text in a terminal, JSON when piped).' },
   'defaults.wait': { type: 'boolean', description: 'Wait for paid jobs to finish unless --no-wait is given.' },
   'defaults.engine': { type: 'string', description: 'Default engine for `zetta generate` (n1, n25, np1, np15).' },
+  'download.auto': {
+    type: 'boolean',
+    description: 'Download finished jobs into the folder you run zetta in. Unset: on in a terminal, off for scripts and agents. --download / --no-download override it per command.',
+  },
+  'download.dir': { type: 'string', description: 'Folder for automatic downloads instead of the current one (relative paths start from the current folder).' },
+  'download.formats': { type: 'list', description: 'Only these formats in automatic downloads, comma-separated, e.g. glb,fbx (default: every result file).' },
   'spend.maxPerCommand': { type: 'number', description: 'Credits a single command may spend without --yes or --max-credits.' },
   'spend.requireConfirm': { type: 'boolean', description: 'Ask before spending in a terminal (default true).' },
   currentProfile: { type: 'string', description: 'The profile used when --profile is not given.' },
@@ -112,6 +119,9 @@ export class ConfigStore {
         value = ['true', '1', 'yes'].includes(raw.toLowerCase())
       } else if (spec.type === 'enum' && !spec.values!.includes(raw)) {
         throw usageError(`${key} must be one of: ${spec.values!.join(', ')}.`)
+      } else if (spec.type === 'list') {
+        value = raw.split(',').map((item) => item.trim().toLowerCase().replace(/^\./, '')).filter(Boolean)
+        if (!(value as string[]).length) throw usageError(`${key} needs at least one value, e.g. glb,fbx.`)
       }
     }
     const parts = key.split('.')

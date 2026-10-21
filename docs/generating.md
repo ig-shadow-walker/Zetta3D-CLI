@@ -77,13 +77,16 @@ Set `zetta config set spend.maxPerCommand 200` to let scripts spend up to 200 cr
 
 | Flag | Behaviour |
 |---|---|
-| *(none)* | Returns at once: `{"id": 1234, "status": "queued", …, "next": "zetta asset wait 1234"}` |
+| *(none, in a terminal)* | Waits, then downloads the result files into the current folder ([automatic downloads](configuration.md#automatic-downloads)) |
+| *(none, scripts and agents)* | Returns at once: `{"id": 1234, "status": "queued", …, "next": "zetta asset wait 1234"}` |
 | `--wait` | Waits for the job to finish |
-| `--timeout 10m` | With `--wait`: stops waiting after this long. Exit code 10; the job keeps running |
+| `--timeout 10m` | Stops waiting after this long. Exit code 10; the job keeps running |
 | `--out <folder>` | Waits, then downloads the result files there |
-| `--format glb` | With `--out`: only these formats |
+| `--download` / `--no-download` | Turns the automatic download on or off for this command |
+| `--no-wait` | Returns at once, without downloading |
+| `--format glb` | When downloading: only these formats |
 
-Set `zetta config set defaults.wait true` to wait by default (`--no-wait` overrides it).
+`zetta config set download.auto false` turns automatic downloads off, and `true` turns them on for scripts too. `zetta config set defaults.wait true` waits by default without downloading (`--no-wait` overrides it).
 
 ## Examples
 

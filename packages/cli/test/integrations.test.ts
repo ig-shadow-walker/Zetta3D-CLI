@@ -3,20 +3,20 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { mergeMcpJson, withMarkedBlock, withoutMarkedBlock } from '../src/commands/integrations'
-import { zetta } from './harness'
+import { homeEnv, zetta } from './harness'
 
 describe('skill', () => {
   it('installs, stays idempotent, and uninstalls', async () => {
     const home = mkdtempSync(join(tmpdir(), 'zh-'))
-    const first = await zetta(['skill', 'install'], { env: { HOME: home } })
+    const first = await zetta(['skill', 'install'], { env: homeEnv(home) })
     expect(first.code).toBe(0)
     const path = join(home, '.claude', 'skills', 'zetta3d', 'SKILL.md')
     expect(first.json()).toMatchObject({ path, result: 'created' })
     const text = readFileSync(path, 'utf8')
     expect(text.startsWith('---\nname: zetta3d\ndescription: ')).toBe(true)
     expect(text).toContain('zetta asset wait')
-    expect((await zetta(['skill', 'install'], { env: { HOME: home } })).json().result).toBe('unchanged')
-    expect((await zetta(['skill', 'uninstall'], { env: { HOME: home } })).json().removed).toBe(true)
+    expect((await zetta(['skill', 'install'], { env: homeEnv(home) })).json().result).toBe('unchanged')
+    expect((await zetta(['skill', 'uninstall'], { env: homeEnv(home) })).json().removed).toBe(true)
     expect(existsSync(path)).toBe(false)
   })
 
@@ -33,7 +33,7 @@ describe('setup', () => {
     const home = mkdtempSync(join(tmpdir(), 'zh-'))
     mkdirSync(join(home, '.cursor'))
     writeFileSync(join(home, '.cursor', 'mcp.json'), JSON.stringify({ mcpServers: { other: { command: 'x' } } }))
-    const run = await zetta(['setup', 'cursor', '--budget', '300'], { env: { HOME: home } })
+    const run = await zetta(['setup', 'cursor', '--budget', '300'], { env: homeEnv(home) })
     expect(run.code).toBe(0)
     const config = JSON.parse(readFileSync(join(home, '.cursor', 'mcp.json'), 'utf8'))
     expect(config.mcpServers.other).toEqual({ command: 'x' })
@@ -45,8 +45,8 @@ describe('setup', () => {
     const home = mkdtempSync(join(tmpdir(), 'zh-'))
     mkdirSync(join(home, '.codex'))
     writeFileSync(join(home, '.codex', 'config.toml'), 'model = "x"\n')
-    await zetta(['setup', 'codex'], { env: { HOME: home } })
-    await zetta(['setup', 'codex', '--read-only'], { env: { HOME: home } })
+    await zetta(['setup', 'codex'], { env: homeEnv(home) })
+    await zetta(['setup', 'codex', '--read-only'], { env: homeEnv(home) })
     const toml = readFileSync(join(home, '.codex', 'config.toml'), 'utf8')
     expect(toml.startsWith('model = "x"')).toBe(true)
     expect(toml.match(/\[mcp_servers\.zetta3d\]/g)).toHaveLength(1)
@@ -56,7 +56,7 @@ describe('setup', () => {
 
   it('--print changes nothing', async () => {
     const home = mkdtempSync(join(tmpdir(), 'zh-'))
-    const run = await zetta(['setup', 'claude-code', '--print'], { env: { HOME: home } })
+    const run = await zetta(['setup', 'claude-code', '--print'], { env: homeEnv(home) })
     expect(run.code).toBe(0)
     expect(run.json().steps.map((s: { result: string }) => s.result)).toEqual(['would write', 'would run'])
     expect(existsSync(join(home, '.claude'))).toBe(false)

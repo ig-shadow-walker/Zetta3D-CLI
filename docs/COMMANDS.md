@@ -308,14 +308,15 @@ Kind: **spends credits** · MCP tool `splat_create`
 | `--title` | string | Title in your library. |
 | `--tag` | string (repeatable) | Tags. |
 | `--visibility` | `public` \| `private` | Share publicly, or keep private. |
-| `--format` | string (repeatable) | With --out: only these formats (ply, spz, glb …). |
+| `--format` | string (repeatable) | When downloading: only these formats (ply, spz, glb …). |
 | `--yes` | boolean | Spend without asking. Needed when not in a terminal, unless --max-credits covers the price. |
 | `--max-credits` | number | Refuse if this would cost more than this many credits. |
 | `--dry-run` | boolean | Show the price and stop. Nothing is spent. |
 | `--idempotency-key` | string | Reuse the same key to retry a command without paying twice. |
-| `--wait` | boolean | Wait for the job to finish (default: return at once with its id). |
-| `--timeout` | string | With --wait, stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
+| `--wait` | boolean | Wait for the job to finish (default: return at once with its id, unless it downloads automatically). |
+| `--timeout` | string | Stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
 | `--out` | string | Download the results into this folder when done (implies --wait). |
+| `--download` | boolean | Wait, then download the results into the current folder (default: the download.auto setting, which is on in a terminal). --no-download returns at once. |
 
 Examples:
 
@@ -341,14 +342,15 @@ Kind: **spends credits** · MCP tool `splat_export`
 | `--resolution` | `full_res` \| `500k` \| `150k` \| `100k` | With --as splat: how many splats (default full_res). |
 | `--mesh-variant` | `textured` \| `vertex_colored` | With --as mesh: textured (default) or vertex_colored. |
 | `--title` | string | Title of the export. |
-| `--format` | string (repeatable) | With --out: only these formats. |
+| `--format` | string (repeatable) | When downloading: only these formats. |
 | `--yes` | boolean | Spend without asking. Needed when not in a terminal, unless --max-credits covers the price. |
 | `--max-credits` | number | Refuse if this would cost more than this many credits. |
 | `--dry-run` | boolean | Show the price and stop. Nothing is spent. |
 | `--idempotency-key` | string | Reuse the same key to retry a command without paying twice. |
-| `--wait` | boolean | Wait for the job to finish (default: return at once with its id). |
-| `--timeout` | string | With --wait, stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
+| `--wait` | boolean | Wait for the job to finish (default: return at once with its id, unless it downloads automatically). |
+| `--timeout` | string | Stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
 | `--out` | string | Download the results into this folder when done (implies --wait). |
+| `--download` | boolean | Wait, then download the results into the current folder (default: the download.auto setting, which is on in a terminal). --no-download returns at once. |
 
 Examples:
 
@@ -378,14 +380,15 @@ Kind: **spends credits** · MCP tool `refine_retopo`
 | `--title` | string | Title of the new asset. |
 | `--tag` | string (repeatable) | Tags for the new asset. |
 | `--visibility` | `public` \| `private` | Share publicly, or keep private. |
-| `--format` | string (repeatable) | With --out: download only these formats. |
+| `--format` | string (repeatable) | When downloading: only these formats. |
 | `--yes` | boolean | Spend without asking. Needed when not in a terminal, unless --max-credits covers the price. |
 | `--max-credits` | number | Refuse if this would cost more than this many credits. |
 | `--dry-run` | boolean | Show the price and stop. Nothing is spent. |
 | `--idempotency-key` | string | Reuse the same key to retry a command without paying twice. |
-| `--wait` | boolean | Wait for the job to finish (default: return at once with its id). |
-| `--timeout` | string | With --wait, stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
+| `--wait` | boolean | Wait for the job to finish (default: return at once with its id, unless it downloads automatically). |
+| `--timeout` | string | Stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
 | `--out` | string | Download the results into this folder when done (implies --wait). |
+| `--download` | boolean | Wait, then download the results into the current folder (default: the download.auto setting, which is on in a terminal). --no-download returns at once. |
 | `--engine` | `r1` \| `n1` | Retopology engine (default r1). |
 | `--faces` | number | Target faces (r1): 500–20,000 triangles or 500–10,000 quads. Default 8,000. |
 | `--face-level` | `low` \| `medium` \| `high` | Density (n1). |
@@ -418,14 +421,15 @@ Kind: **spends credits** · MCP tool `refine_segment`
 | `--title` | string | Title of the new asset. |
 | `--tag` | string (repeatable) | Tags for the new asset. |
 | `--visibility` | `public` \| `private` | Share publicly, or keep private. |
-| `--format` | string (repeatable) | With --out: download only these formats. |
+| `--format` | string (repeatable) | When downloading: only these formats. |
 | `--yes` | boolean | Spend without asking. Needed when not in a terminal, unless --max-credits covers the price. |
 | `--max-credits` | number | Refuse if this would cost more than this many credits. |
 | `--dry-run` | boolean | Show the price and stop. Nothing is spent. |
 | `--idempotency-key` | string | Reuse the same key to retry a command without paying twice. |
-| `--wait` | boolean | Wait for the job to finish (default: return at once with its id). |
-| `--timeout` | string | With --wait, stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
+| `--wait` | boolean | Wait for the job to finish (default: return at once with its id, unless it downloads automatically). |
+| `--timeout` | string | Stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
 | `--out` | string | Download the results into this folder when done (implies --wait). |
+| `--download` | boolean | Wait, then download the results into the current folder (default: the download.auto setting, which is on in a terminal). --no-download returns at once. |
 | `--smart` | boolean | Smart segmentation (better parts, costs more). |
 | `--granularity` | `simple` \| `balanced` \| `detailed` | How finely to split. |
 | `--split-by-connectivity` | boolean | Split disconnected pieces apart (default on; --no-split-by-connectivity to turn off). |
@@ -447,14 +451,15 @@ Kind: **spends credits** · MCP tool `refine_uv`
 | `--title` | string | Title of the new asset. |
 | `--tag` | string (repeatable) | Tags for the new asset. |
 | `--visibility` | `public` \| `private` | Share publicly, or keep private. |
-| `--format` | string (repeatable) | With --out: download only these formats. |
+| `--format` | string (repeatable) | When downloading: only these formats. |
 | `--yes` | boolean | Spend without asking. Needed when not in a terminal, unless --max-credits covers the price. |
 | `--max-credits` | number | Refuse if this would cost more than this many credits. |
 | `--dry-run` | boolean | Show the price and stop. Nothing is spent. |
 | `--idempotency-key` | string | Reuse the same key to retry a command without paying twice. |
-| `--wait` | boolean | Wait for the job to finish (default: return at once with its id). |
-| `--timeout` | string | With --wait, stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
+| `--wait` | boolean | Wait for the job to finish (default: return at once with its id, unless it downloads automatically). |
+| `--timeout` | string | Stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
 | `--out` | string | Download the results into this folder when done (implies --wait). |
+| `--download` | boolean | Wait, then download the results into the current folder (default: the download.auto setting, which is on in a terminal). --no-download returns at once. |
 | `--bake` | boolean | Bake the existing texture onto the new UVs. |
 | `--orientation` | `as-is` \| `+x` \| `-x` \| `+y` \| `-y` | Which way the model faces in the export. |
 | `--compress` | boolean | Compress geometry. |
@@ -478,14 +483,15 @@ Kind: **spends credits** · MCP tool `refine_texture`
 | `--title` | string | Title of the new asset. |
 | `--tag` | string (repeatable) | Tags for the new asset. |
 | `--visibility` | `public` \| `private` | Share publicly, or keep private. |
-| `--format` | string (repeatable) | With --out: download only these formats. |
+| `--format` | string (repeatable) | When downloading: only these formats. |
 | `--yes` | boolean | Spend without asking. Needed when not in a terminal, unless --max-credits covers the price. |
 | `--max-credits` | number | Refuse if this would cost more than this many credits. |
 | `--dry-run` | boolean | Show the price and stop. Nothing is spent. |
 | `--idempotency-key` | string | Reuse the same key to retry a command without paying twice. |
-| `--wait` | boolean | Wait for the job to finish (default: return at once with its id). |
-| `--timeout` | string | With --wait, stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
+| `--wait` | boolean | Wait for the job to finish (default: return at once with its id, unless it downloads automatically). |
+| `--timeout` | string | Stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
 | `--out` | string | Download the results into this folder when done (implies --wait). |
+| `--download` | boolean | Wait, then download the results into the current folder (default: the download.auto setting, which is on in a terminal). --no-download returns at once. |
 | `--reference` | string | Reference picture: a file, URL or image:<id>. |
 | `--prompt` | string | Describe the look, e.g. "weathered bronze with green patina". |
 | `--tier` | `standard` \| `hd` \| `8k` | Texture resolution tier. |
@@ -523,14 +529,15 @@ Kind: **spends credits** · MCP tool `refine_rig`
 | `--title` | string | Title of the new asset. |
 | `--tag` | string (repeatable) | Tags for the new asset. |
 | `--visibility` | `public` \| `private` | Share publicly, or keep private. |
-| `--format` | string (repeatable) | With --out: download only these formats. |
+| `--format` | string (repeatable) | When downloading: only these formats. |
 | `--yes` | boolean | Spend without asking. Needed when not in a terminal, unless --max-credits covers the price. |
 | `--max-credits` | number | Refuse if this would cost more than this many credits. |
 | `--dry-run` | boolean | Show the price and stop. Nothing is spent. |
 | `--idempotency-key` | string | Reuse the same key to retry a command without paying twice. |
-| `--wait` | boolean | Wait for the job to finish (default: return at once with its id). |
-| `--timeout` | string | With --wait, stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
+| `--wait` | boolean | Wait for the job to finish (default: return at once with its id, unless it downloads automatically). |
+| `--timeout` | string | Stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
 | `--out` | string | Download the results into this folder when done (implies --wait). |
+| `--download` | boolean | Wait, then download the results into the current folder (default: the download.auto setting, which is on in a terminal). --no-download returns at once. |
 | `--rig-type` | `biped` \| `quadruped` \| `hexapod` \| `octopod` \| `avian` \| `serpentine` \| `aquatic` | Body plan (default biped). |
 | `--rig-spec` | `standard` \| `mixamo` | Bone naming (default standard). |
 | `--rig-format` | `glb` \| `fbx` | File format of the rigged model (default glb). |
@@ -559,14 +566,15 @@ Kind: **spends credits** · MCP tool `refine_convert`
 | `--title` | string | Title of the new asset. |
 | `--tag` | string (repeatable) | Tags for the new asset. |
 | `--visibility` | `public` \| `private` | Share publicly, or keep private. |
-| `--format` | string (repeatable) | With --out: download only these formats. |
+| `--format` | string (repeatable) | When downloading: only these formats. |
 | `--yes` | boolean | Spend without asking. Needed when not in a terminal, unless --max-credits covers the price. |
 | `--max-credits` | number | Refuse if this would cost more than this many credits. |
 | `--dry-run` | boolean | Show the price and stop. Nothing is spent. |
 | `--idempotency-key` | string | Reuse the same key to retry a command without paying twice. |
-| `--wait` | boolean | Wait for the job to finish (default: return at once with its id). |
-| `--timeout` | string | With --wait, stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
+| `--wait` | boolean | Wait for the job to finish (default: return at once with its id, unless it downloads automatically). |
+| `--timeout` | string | Stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
 | `--out` | string | Download the results into this folder when done (implies --wait). |
+| `--download` | boolean | Wait, then download the results into the current folder (default: the download.auto setting, which is on in a terminal). --no-download returns at once. |
 | `--to` | string | Target format: GLTF, FBX, USDZ, OBJ, STL, 3MF (any case). (**required**) |
 | `--quad` | boolean | Quad topology. |
 | `--symmetry` | boolean | Force symmetry. |
@@ -612,7 +620,7 @@ Kind: reads only · MCP tool `asset_export`
 | `<source>` | string | An asset id, or a local .glb file. (**required**) |
 | `--format` | `obj` \| `fbx` \| `stl` | Target format. (**required**) |
 | `--fbx-preset` | `unity` \| `unreal` \| `blender` \| `maya` \| `threejs` | With --format fbx: axes and units for this app (default unity). |
-| `--out` | string | Folder to save into. (default `.`) |
+| `--out` | string | Folder to save into (default: the current folder, or the download.dir setting). |
 
 Examples:
 
@@ -669,7 +677,7 @@ Kind: reads only · MCP tool `asset_get`
 
 Wait until an asset finishes (success, failed or cancelled).
 
-Exits 0 on success, 9 if the job failed or was cancelled, 10 if --timeout passed first (the job keeps running).
+Exits 0 on success, 9 if the job failed or was cancelled, 10 if --timeout passed first (the job keeps running). With the download.auto setting on (the default in a terminal), the results download into the current folder.
 
 ```
 zetta asset wait <id> [flags]
@@ -682,7 +690,8 @@ Kind: reads only · MCP tool `asset_wait`
 | `<id>` | number | The asset id (shown by `zetta asset list`). (**required**) |
 | `--timeout` | string | Stop waiting after this long, e.g. 90s, 10m. |
 | `--out` | string | Download the results into this folder when done. |
-| `--format` | string (repeatable) | With --out: only these formats (glb, fbx, obj, usdz, …). |
+| `--download` | boolean | Download the results into the current folder (default: the download.auto setting). --no-download only waits. |
+| `--format` | string (repeatable) | When downloading: only these formats (glb, fbx, obj, usdz, …). |
 
 Examples:
 
@@ -706,7 +715,7 @@ Kind: reads only · MCP tool `asset_download`
 | Argument / flag | Type | Description |
 |---|---|---|
 | `<id>` | number | The asset id (shown by `zetta asset list`). (**required**) |
-| `--out` | string | Folder to save into. (default `.`) |
+| `--out` | string | Folder to save into (default: the current folder, or the download.dir setting). |
 | `--format` | string (repeatable) | Only these formats, e.g. glb, fbx, obj, usdz, ply. |
 | `--primary` | boolean | Only the single best model file. |
 | `--overwrite` | boolean | Replace existing files instead of adding -2, -3 … |
@@ -902,7 +911,8 @@ Kind: changes something (free) · MCP tool `image_generate`
 | `--aspect-ratio` | `9:16` \| `2:3` \| `3:4` \| `4:5` \| `1:1` \| `5:4` \| `4:3` \| `3:2` \| `16:9` \| `21:9` | Aspect ratio. |
 | `--resolution` | `1K` \| `2K` \| `4K` | Resolution (4K needs a paid plan). |
 | `--engine` | string | Image engine by name: flash (default) or pro. See `zetta catalog engines --images`. |
-| `--out` | string | Folder to save the picture(s) into. (default `.`) |
+| `--out` | string | Folder to save the picture(s) into (default: the current folder, or the download.dir setting). |
+| `--download` | boolean | Save the picture(s) (default: on, unless the download.auto setting is false). --no-download keeps them in your image library only. |
 | `--for3d` | boolean | A clean, square picture made to be turned into 3D. |
 | `--subject` | `object` \| `environment` | An object, or a whole environment. |
 | `--fast` | boolean | Faster, lighter generation. |
@@ -931,7 +941,8 @@ Kind: changes something (free) · MCP tool `image_edit`
 | `--aspect-ratio` | `9:16` \| `2:3` \| `3:4` \| `4:5` \| `1:1` \| `5:4` \| `4:3` \| `3:2` \| `16:9` \| `21:9` | Aspect ratio. |
 | `--resolution` | `1K` \| `2K` \| `4K` | Resolution (4K needs a paid plan). |
 | `--engine` | string | Image engine by name: flash (default) or pro. See `zetta catalog engines --images`. |
-| `--out` | string | Folder to save the picture(s) into. (default `.`) |
+| `--out` | string | Folder to save the picture(s) into (default: the current folder, or the download.dir setting). |
+| `--download` | boolean | Save the picture(s) (default: on, unless the download.auto setting is false). --no-download keeps them in your image library only. |
 
 Examples:
 
@@ -956,7 +967,8 @@ Kind: changes something (free) · MCP tool `image_compose`
 | `--aspect-ratio` | `9:16` \| `2:3` \| `3:4` \| `4:5` \| `1:1` \| `5:4` \| `4:3` \| `3:2` \| `16:9` \| `21:9` | Aspect ratio. |
 | `--resolution` | `1K` \| `2K` \| `4K` | Resolution (4K needs a paid plan). |
 | `--engine` | string | Image engine by name: flash (default) or pro. See `zetta catalog engines --images`. |
-| `--out` | string | Folder to save the picture(s) into. (default `.`) |
+| `--out` | string | Folder to save the picture(s) into (default: the current folder, or the download.dir setting). |
+| `--download` | boolean | Save the picture(s) (default: on, unless the download.auto setting is false). --no-download keeps them in your image library only. |
 
 Examples:
 
@@ -1008,7 +1020,7 @@ Kind: reads only · MCP tool `image_download`
 | Argument / flag | Type | Description |
 |---|---|---|
 | `<id>` | number | Image id. (**required**) |
-| `--out` | string | Folder to save into. (default `.`) |
+| `--out` | string | Folder to save into (default: the current folder, or the download.dir setting). |
 
 ### `zetta image delete`
 
@@ -1194,6 +1206,8 @@ Kind: reads only · MCP tool `pipeline_runs`
 
 Run a pipeline on one seed (a picture or a model).
 
+Returns at once with the run id, unless the final models download: with the download.auto setting on (the default in a terminal), or with --wait, --out or --download, it waits for the run and saves them. --no-wait returns at once.
+
 ```
 zetta pipeline run <id> <seed> [flags]
 ```
@@ -1210,6 +1224,10 @@ Kind: **spends credits** · MCP tool `pipeline_run`
 | `--max-credits` | number | Refuse if this would cost more than this many credits. |
 | `--dry-run` | boolean | Show the price and stop. Nothing is spent. |
 | `--idempotency-key` | string | Reuse the same key to retry a command without paying twice. |
+| `--wait` | boolean | Wait for the job to finish (default: return at once with its id, unless it downloads automatically). |
+| `--timeout` | string | Stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
+| `--out` | string | Download the results into this folder when done (implies --wait). |
+| `--download` | boolean | Wait, then download the results into the current folder (default: the download.auto setting, which is on in a terminal). --no-download returns at once. |
 
 Examples:
 
@@ -1221,7 +1239,7 @@ zetta pipeline run 12 ./shoe.jpg --max-credits 300
 
 Run a pipeline once per seed: many pictures, a folder, or several assets.
 
-More than 20 seeds are sent in several batches. The total price is checked against --max-credits first.
+More than 20 seeds are sent in several batches. The total price is checked against --max-credits first. Downloads work as for `pipeline run`: every run is waited for, then its final models are saved.
 
 ```
 zetta pipeline batch <id> <seeds...> [flags]
@@ -1239,6 +1257,10 @@ Kind: **spends credits** · MCP tool `pipeline_batch`
 | `--max-credits` | number | Refuse if this would cost more than this many credits. |
 | `--dry-run` | boolean | Show the price and stop. Nothing is spent. |
 | `--idempotency-key` | string | Reuse the same key to retry a command without paying twice. |
+| `--wait` | boolean | Wait for the job to finish (default: return at once with its id, unless it downloads automatically). |
+| `--timeout` | string | Stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
+| `--out` | string | Download the results into this folder when done (implies --wait). |
+| `--download` | boolean | Wait, then download the results into the current folder (default: the download.auto setting, which is on in a terminal). --no-download returns at once. |
 
 Examples:
 
@@ -1269,7 +1291,7 @@ Kind: reads only · MCP tool `run_get`
 
 Wait until a run finishes, or needs you (review, manual step, draft input).
 
-Exits 0 when done or waiting on you (see `blocked`), 9 if it failed or was cancelled, 10 if --timeout passed first.
+Exits 0 when done or waiting on you (see `blocked`), 9 if it failed or was cancelled, 10 if --timeout passed first. With the download.auto setting on (the default in a terminal), the final models download into the current folder.
 
 ```
 zetta run wait <id> [flags]
@@ -1282,6 +1304,7 @@ Kind: reads only · MCP tool `run_wait`
 | `<id>` | number | Run id (from `zetta pipeline runs <id>` or a batch result). (**required**) |
 | `--timeout` | string | Stop waiting after this long, e.g. 90s, 10m. |
 | `--out` | string | When done, download every output into this folder. |
+| `--download` | boolean | When done, download the final models into the current folder (default: the download.auto setting). --no-download only waits. |
 
 ### `zetta run outputs`
 
@@ -1296,7 +1319,7 @@ Kind: reads only · MCP tool `run_outputs`
 | Argument / flag | Type | Description |
 |---|---|---|
 | `<id>` | number | Run id (from `zetta pipeline runs <id>` or a batch result). (**required**) |
-| `--out` | string | Folder to save into. (default `.`) |
+| `--out` | string | Folder to save into (default: the current folder, or the download.dir setting). |
 | `--format` | string (repeatable) | Only these formats (glb, fbx, …). |
 | `--final-only` | boolean | Only the last step of each branch. |
 
@@ -1521,7 +1544,7 @@ Kind: local only · not an MCP tool
 
 | Argument / flag | Type | Description |
 |---|---|---|
-| `<key>` | `output` \| `defaults.wait` \| `defaults.engine` \| `spend.maxPerCommand` \| `spend.requireConfirm` \| `currentProfile` | The setting. (**required**) |
+| `<key>` | `output` \| `defaults.wait` \| `defaults.engine` \| `download.auto` \| `download.dir` \| `download.formats` \| `spend.maxPerCommand` \| `spend.requireConfirm` \| `currentProfile` | The setting. (**required**) |
 
 ### `zetta config set`
 
@@ -1535,7 +1558,7 @@ Kind: local only · not an MCP tool
 
 | Argument / flag | Type | Description |
 |---|---|---|
-| `<key>` | `output` \| `defaults.wait` \| `defaults.engine` \| `spend.maxPerCommand` \| `spend.requireConfirm` \| `currentProfile` | The setting. (**required**) |
+| `<key>` | `output` \| `defaults.wait` \| `defaults.engine` \| `download.auto` \| `download.dir` \| `download.formats` \| `spend.maxPerCommand` \| `spend.requireConfirm` \| `currentProfile` | The setting. (**required**) |
 | `<value>` | string | The new value. (**required**) |
 
 Examples:
@@ -1558,7 +1581,7 @@ Kind: local only · not an MCP tool
 
 | Argument / flag | Type | Description |
 |---|---|---|
-| `<key>` | `output` \| `defaults.wait` \| `defaults.engine` \| `spend.maxPerCommand` \| `spend.requireConfirm` \| `currentProfile` | The setting. (**required**) |
+| `<key>` | `output` \| `defaults.wait` \| `defaults.engine` \| `download.auto` \| `download.dir` \| `download.formats` \| `spend.maxPerCommand` \| `spend.requireConfirm` \| `currentProfile` | The setting. (**required**) |
 
 ### `zetta config profiles`
 
@@ -1676,7 +1699,7 @@ Make a 3D model from a text prompt, a picture, or several views.
 Pictures can be local files, URLs, or image:<id> from your image library.
 Engines: n1 (every plan), n2.5, np1, np1.5 (paid plans). See `zetta catalog engines` for what each supports.
 The price is checked first: use --dry-run to see it, --yes or --max-credits to spend without a prompt.
-Returns at once with the asset id; add --wait to wait, or --out <folder> to wait and download.
+In a terminal it waits, then downloads the results into the current folder (the download.auto setting). Scripts and agents get the asset id at once; add --wait to wait, or --out <folder> to wait and download.
 
 ```
 zetta generate [flags]
@@ -1712,14 +1735,15 @@ Kind: **spends credits** · MCP tool `generate`
 | `--title` | string | Title in your library. |
 | `--tag` | string (repeatable) | Tags. |
 | `--visibility` | `public` \| `private` | Share publicly, or keep private (private needs a paid plan). |
-| `--format` | string (repeatable) | With --out: download only these formats (glb, fbx, obj, usdz …). |
+| `--format` | string (repeatable) | When downloading: only these formats (glb, fbx, obj, usdz …). |
 | `--yes` | boolean | Spend without asking. Needed when not in a terminal, unless --max-credits covers the price. |
 | `--max-credits` | number | Refuse if this would cost more than this many credits. |
 | `--dry-run` | boolean | Show the price and stop. Nothing is spent. |
 | `--idempotency-key` | string | Reuse the same key to retry a command without paying twice. |
-| `--wait` | boolean | Wait for the job to finish (default: return at once with its id). |
-| `--timeout` | string | With --wait, stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
+| `--wait` | boolean | Wait for the job to finish (default: return at once with its id, unless it downloads automatically). |
+| `--timeout` | string | Stop waiting after this long, e.g. 90s, 10m. The job keeps running. |
 | `--out` | string | Download the results into this folder when done (implies --wait). |
+| `--download` | boolean | Wait, then download the results into the current folder (default: the download.auto setting, which is on in a terminal). --no-download returns at once. |
 
 Examples:
 

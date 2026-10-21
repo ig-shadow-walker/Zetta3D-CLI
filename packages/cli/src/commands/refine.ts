@@ -35,7 +35,7 @@ const common = {
   title: z.string().max(200).optional().describe('Title of the new asset.'),
   tag: z.array(z.string()).optional().describe('Tags for the new asset.'),
   visibility: z.enum(['public', 'private']).optional().describe('Share publicly, or keep private.'),
-  format: z.array(z.string()).optional().describe('With --out: download only these formats.'),
+  format: z.array(z.string()).optional().describe('When downloading: only these formats.'),
   ...spendShape,
   ...waitShape,
 }

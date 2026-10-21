@@ -84,6 +84,8 @@ Rules the framework enforces, so commands don't have to:
 | `packages/cli/test/isolation.test.ts` | Upstream identifiers never reach output |
 | `scripts/test-install.ts` | The real installers end to end against a local download host |
 
+`harness.ts` points the home and settings folders at a temp folder for every run, so no test can touch your real ones. When a test needs a known home folder, pass `env: homeEnv(dir)`: Windows reads `USERPROFILE` and `APPDATA`, not `HOME`. In the CLI, use `homeDir(ctx.env)` from `core/paths.ts`, never `os.homedir()`.
+
 ## Live smoke test
 
 Runs the real CLI against the real API. It creates only what it deletes again.

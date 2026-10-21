@@ -9,6 +9,7 @@ import {
   type QuoteRequest,
   type ZettaClient,
 } from '@zetta3d/sdk'
+import { resolve } from 'node:path'
 import type { Context } from './context'
 import { parseDuration } from './define'
 import { usageError } from './errors'
@@ -105,6 +106,7 @@ export interface WaitFlags {
   wait?: boolean
   timeout?: string
   out?: string
+  download?: boolean
 }
 
 export interface DownloadedFile {
@@ -132,12 +134,28 @@ export interface DryRunOutcome {
   request: Record<string, unknown>
 }
 
-/** Resolves --wait/--timeout/--out (and the configured default) into one decision. */
-export function waitPlan(ctx: Context, flags: WaitFlags): { wait: boolean; timeoutMs: number | undefined; out: string | undefined } {
+export interface WaitPlan {
+  wait: boolean
+  timeoutMs: number | undefined
+  /** The folder to download into when the job is done; none means no download. */
+  out: string | undefined
+  /** True when the download comes from the download.auto setting rather than --out. */
+  auto: boolean
+  /** Formats from the download.formats setting (automatic downloads only). */
+  formats?: string[]
+}
+
+/**
+ * Resolves --wait/--timeout/--out/--download and the settings into one decision.
+ * --out and --download always wait. Otherwise an automatic download waits too, unless --no-wait.
+ */
+export function waitPlan(ctx: Context, flags: WaitFlags): WaitPlan {
   const timeoutMs = parseDuration(flags.timeout)
   if (Number.isNaN(timeoutMs)) throw usageError(`--timeout "${flags.timeout}" is not a duration (try 90s, 10m or 1h).`)
-  const wait = Boolean(flags.out) || (flags.wait ?? ctx.config.file.defaults?.wait ?? false)
-  return { wait, timeoutMs, out: flags.out }
+  if (flags.out) return { wait: true, timeoutMs, out: resolve(ctx.cwd, flags.out), auto: false }
+  const auto = flags.wait === false && flags.download === undefined ? undefined : ctx.autoDownload(flags.download)
+  if (auto) return { wait: true, timeoutMs, out: auto.dir, auto: true, ...(auto.formats ? { formats: auto.formats } : {}) }
+  return { wait: flags.wait ?? ctx.config.file.defaults?.wait ?? false, timeoutMs, out: undefined, auto: false }
 }
 
 /**
@@ -192,8 +210,34 @@ export async function runPaidJob(
     return outcome
   }
   assertSucceeded(detail.generation)
-  if (plan.out) outcome.files = await downloadAsset(ctx, client, detail.generation, plan.out, { formats: job.formats })
+  if (plan.out && !plan.auto) outcome.files = await downloadAsset(ctx, client, detail.generation, plan.out, { formats: job.formats })
+  if (plan.out && plan.auto) {
+    const result = await downloadFinished(ctx, client, detail.generation, plan.out, job.formats ?? plan.formats)
+    outcome.files = result.files
+    if (result.next) outcome.next = result.next
+  }
   return outcome
+}
+
+/**
+ * An automatic download. It never fails a job that already finished: a problem (no file in the
+ * chosen formats, a network error) becomes a warning and a `next` step to download it later.
+ */
+export async function downloadFinished(
+  ctx: Context,
+  client: ZettaClient,
+  generation: Generation,
+  dir: string,
+  formats: string[] | undefined,
+): Promise<{ files: DownloadedFile[]; next?: string }> {
+  try {
+    return { files: await downloadAsset(ctx, client, generation, dir, formats?.length ? { formats } : {}) }
+  } catch (error) {
+    if (ctx.signal?.aborted) throw error
+    const reason = error instanceof Error ? error.message : String(error)
+    ctx.out.warn(`#${generation.id} is done but was not downloaded: ${reason}`)
+    return { files: [], next: `zetta asset download ${generation.id}` }
+  }
 }
 
 /** Waits for an asset with progress events; throws WAIT_TIMEOUT (job untouched) when time runs out. */
@@ -231,7 +275,7 @@ export async function downloadAsset(
       details: { id: generation.id, available },
     })
   }
-  const folder = requireDir(dir)
+  const folder = requireDir(resolve(ctx.cwd, dir))
   const saved: DownloadedFile[] = []
   for (const file of files) {
     const name = `${generation.id}-${file.key.split('/').pop() ?? 'file'}`

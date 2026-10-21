@@ -45,6 +45,8 @@ Jobs take 30 s to several minutes. Shells time out, so:
     zetta asset wait 123 --timeout 90s --out ./models         # exit 10 = still running → run it again
 
 `--out <folder>` waits and downloads in one go; use it only when the wait fits your time limit.
+If the user turned on automatic downloads (`download.auto true`), jobs wait and download into the
+current folder: add `--no-wait` to return at once, and `--no-download` to `asset wait` to only wait.
 
 ## Inputs
 

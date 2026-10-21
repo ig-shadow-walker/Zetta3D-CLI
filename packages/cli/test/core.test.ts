@@ -7,6 +7,7 @@ import { exitCodeFor } from '../src/core/exit-codes'
 import { toErrorEnvelope } from '../src/core/output'
 import { CredentialStore } from '../src/core/credentials'
 import { ConfigStore } from '../src/core/config'
+import { appDataDir, configDir, homeDir } from '../src/core/paths'
 import { ZettaError } from '@zetta3d/sdk'
 import { fakeFetch } from './fake-fetch'
 import { generation, tokenFor, user, zetta } from './harness'
@@ -56,6 +57,33 @@ describe('config and credentials', () => {
     expect(await store.delete('default')).toBe(true)
     expect(await store.get('default')).toBeUndefined()
   })
+})
+
+describe('home and settings folders', () => {
+  const asPlatform = (platform: string, test: () => void) => {
+    const real = Object.getOwnPropertyDescriptor(process, 'platform')!
+    Object.defineProperty(process, 'platform', { value: platform })
+    try {
+      test()
+    } finally {
+      Object.defineProperty(process, 'platform', real)
+    }
+  }
+
+  it('read USERPROFILE and APPDATA on Windows, where HOME means nothing', () =>
+    asPlatform('win32', () => {
+      const env = { HOME: '/elsewhere', USERPROFILE: 'C:\\Users\\me' }
+      expect(homeDir(env)).toBe('C:\\Users\\me')
+      expect(appDataDir(env)).toBe(join('C:\\Users\\me', 'AppData', 'Roaming'))
+      expect(configDir({ ...env, APPDATA: 'D:\\Roaming' })).toBe(join('D:\\Roaming', 'zetta3d'))
+    }))
+
+  it('read HOME and XDG_CONFIG_HOME elsewhere', () =>
+    asPlatform('linux', () => {
+      expect(homeDir({ HOME: '/home/me', USERPROFILE: 'C:\\Users\\me' })).toBe('/home/me')
+      expect(configDir({ HOME: '/home/me' })).toBe(join('/home/me', '.config', 'zetta3d'))
+      expect(configDir({ HOME: '/home/me', XDG_CONFIG_HOME: '/cfg' })).toBe(join('/cfg', 'zetta3d'))
+    }))
 })
 
 describe('program', () => {

@@ -30,6 +30,7 @@ Each item comes back in the same compact shape:
 zetta asset get 1234                               # status, queue position, files
 zetta asset wait 1234 --timeout 5m                 # exit 0 success · 9 failed/cancelled · 10 still running
 zetta asset wait 1234 --out ./models --format glb  # wait, then download
+zetta asset wait 1234 --no-download                 # only wait (in a terminal it downloads here by default)
 zetta asset download 1234 --out ./models           # every result file
 zetta asset download 1234 --format fbx --format usdz
 zetta asset download 1234 --primary                # just the best model file (GLB, then FBX, glTF, OBJ)

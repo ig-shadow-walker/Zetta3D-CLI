@@ -55,9 +55,13 @@ export const spendShape = {
 
 /** Flags of commands that start remote jobs. */
 export const waitShape = {
-  wait: z.boolean().optional().describe('Wait for the job to finish (default: return at once with its id).'),
-  timeout: z.string().optional().describe('With --wait, stop waiting after this long, e.g. 90s, 10m. The job keeps running.'),
+  wait: z.boolean().optional().describe('Wait for the job to finish (default: return at once with its id, unless it downloads automatically).'),
+  timeout: z.string().optional().describe('Stop waiting after this long, e.g. 90s, 10m. The job keeps running.'),
   out: z.string().optional().describe('Download the results into this folder when done (implies --wait).'),
+  download: z
+    .boolean()
+    .optional()
+    .describe('Wait, then download the results into the current folder (default: the download.auto setting, which is on in a terminal). --no-download returns at once.'),
 }
 
 export const pageShape = {

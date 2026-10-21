@@ -1,9 +1,9 @@
 import { pipeline as P, ZettaError, type PipelineRun, type ZettaClient } from '@zetta3d/sdk'
 import { z } from 'zod'
 import type { Context } from '../core/context'
-import { defineCommand, parseDuration, spendShape } from '../core/define'
+import { defineCommand, spendShape } from '../core/define'
 import { usageError } from '../core/errors'
-import { downloadAsset } from '../core/jobs'
+import { downloadAsset, waitPlan } from '../core/jobs'
 import { isUrl, uploadLocal } from '../core/local-files'
 import { table } from '../core/output'
 import { authorizeSpend } from '../core/spend'
@@ -88,50 +88,83 @@ export const runGet = defineCommand({
 export const runWait = defineCommand({
   path: ['run', 'wait'],
   summary: 'Wait until a run finishes, or needs you (review, manual step, draft input).',
-  description: 'Exits 0 when done or waiting on you (see `blocked`), 9 if it failed or was cancelled, 10 if --timeout passed first.',
+  description:
+    'Exits 0 when done or waiting on you (see `blocked`), 9 if it failed or was cancelled, 10 if --timeout passed first. With the download.auto setting on (the default in a terminal), the final models download into the current folder.',
   kind: 'read',
   positionals: [{ name: 'id', required: true }],
   input: z.object({
     id: runId,
     timeout: z.string().optional().describe('Stop waiting after this long, e.g. 90s, 10m.'),
     out: z.string().optional().describe('When done, download every output into this folder.'),
+    download: z.boolean().optional().describe('When done, download the final models into the current folder (default: the download.auto setting). --no-download only waits.'),
   }),
   async run(ctx, input) {
-    const timeoutMs = parseDuration(input.timeout)
-    if (Number.isNaN(timeoutMs)) throw usageError(`--timeout "${input.timeout}" is not a duration.`)
+    const plan = waitPlan(ctx, { ...input, wait: true })
     const client = await ctx.client()
-    let last = ''
-    const run = await client.runs.wait(input.id, {
-      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-      ...(ctx.signal ? { signal: ctx.signal } : {}),
-      onUpdate: (r) => {
-        const done = r.steps.filter((s) => s.status === 'success').length
-        const line = `Run #${r.id}: ${r.status} · ${done}/${r.steps.length} steps done`
-        if (line !== last) ctx.out.progress({ stage: 'wait', message: line, runId: r.id, status: r.status })
-        last = line
-      },
-    })
+    const run = await waitForRun(ctx, client, input.id, plan.timeoutMs)
     const summary = summarizeRun(run)
     if (run.status === 'failed' || run.status === 'cancelled') {
       throw new ZettaError({ code: 'RUN_FAILED', message: `Run #${run.id} ${run.status}. ${summary.blocked.map((b) => `${b.step}: ${b.reason}`).join(' ')}`.trim(), details: { run: summary } })
     }
-    if (run.status === 'done' && input.out) return { ...summary, saved: await downloadRunOutputs(ctx, client, run, input.out) }
-    return summary
+    if (run.status !== 'done' || !plan.out) return summary
+    if (!plan.auto) return { ...summary, saved: await downloadRunOutputs(ctx, client, run, plan.out) }
+    const result = await downloadRunQuietly(ctx, client, run, plan.out, plan.formats)
+    return { ...summary, saved: result.saved, ...(result.next ? { next: result.next } : {}) }
   },
   text: (r: RunSummary & { saved?: Array<{ path: string }> }) => [renderRun(r), ...(r.saved ?? []).map((f) => `saved: ${f.path}`)].join('\n'),
 })
 
-async function downloadRunOutputs(ctx: Context, client: ZettaClient, run: PipelineRun, out: string, formats?: string[]) {
-  const saved: Array<{ step: string; assetId: number; path: string; format: string }> = []
+/** Waits for a run with progress events; stops early when it needs you. Throws WAIT_TIMEOUT when time runs out. */
+export async function waitForRun(ctx: Context, client: ZettaClient, id: number, timeoutMs: number | undefined): Promise<PipelineRun> {
+  let last = ''
+  return client.runs.wait(id, {
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(ctx.signal ? { signal: ctx.signal } : {}),
+    onUpdate: (r) => {
+      const done = r.steps.filter((s) => s.status === 'success').length
+      const line = `Run #${r.id}: ${r.status} · ${done}/${r.steps.length} steps done`
+      if (line !== last) ctx.out.progress({ stage: 'wait', message: line, runId: r.id, status: r.status })
+      last = line
+    },
+  })
+}
+
+export type SavedOutput = { runId: number; step: string; assetId: number; path: string; format: string }
+
+/** Only the last step of each branch: the run's finished models, not the steps in between. */
+export function finalSteps(run: PipelineRun): PipelineRun {
+  const sources = new Set((run.graph?.edges ?? []).map((edge) => String(edge.source)))
+  return { ...run, steps: run.steps.filter((s) => !sources.has(s.nodeId)) }
+}
+
+export async function downloadRunOutputs(ctx: Context, client: ZettaClient, run: PipelineRun, out: string, formats?: string[]): Promise<SavedOutput[]> {
+  const saved: SavedOutput[] = []
   const ids = [...new Set(run.steps.filter((s) => s.status === 'success' && s.gen3dPostId).map((s) => [s.nodeId, s.gen3dPostId!] as const).map(([n, id]) => `${n}:${id}`))]
   for (const entry of ids) {
     const [step, id] = entry.split(':') as [string, string]
     const { generation } = await client.generations.get(Number(id))
     if (generation.status !== 'success') continue
     const files = await downloadAsset(ctx, client, generation, out, formats?.length ? { formats } : {})
-    for (const file of files) saved.push({ step, assetId: Number(id), path: file.path, format: file.format })
+    for (const file of files) saved.push({ runId: run.id, step, assetId: Number(id), path: file.path, format: file.format })
   }
   return saved
+}
+
+/** The automatic download of a finished run's final models: a problem becomes a warning, never a failure. */
+export async function downloadRunQuietly(
+  ctx: Context,
+  client: ZettaClient,
+  run: PipelineRun,
+  out: string,
+  formats?: string[],
+): Promise<{ saved: SavedOutput[]; next?: string }> {
+  try {
+    return { saved: await downloadRunOutputs(ctx, client, finalSteps(run), out, formats) }
+  } catch (error) {
+    if (ctx.signal?.aborted) throw error
+    ctx.out.warn(`Run #${run.id} is done but its models were not downloaded: ${error instanceof Error ? error.message : String(error)}`)
+    return { saved: [], next: `zetta run outputs ${run.id} --final-only` }
+  }
 }
 
 export const runOutputs = defineCommand({
@@ -141,18 +174,15 @@ export const runOutputs = defineCommand({
   positionals: [{ name: 'id', required: true }],
   input: z.object({
     id: runId,
-    out: z.string().default('.').describe('Folder to save into.'),
+    out: z.string().optional().describe('Folder to save into (default: the current folder, or the download.dir setting).'),
     format: z.array(z.string()).optional().describe('Only these formats (glb, fbx, …).'),
     finalOnly: z.boolean().optional().describe('Only the last step of each branch.'),
   }),
   async run(ctx, input) {
     const client = await ctx.client()
     let run = await client.runs.get(input.id)
-    if (input.finalOnly) {
-      const sources = new Set((run.graph?.edges ?? []).map((edge) => String(edge.source)))
-      run = { ...run, steps: run.steps.filter((s) => !sources.has(s.nodeId)) }
-    }
-    const saved = await downloadRunOutputs(ctx, client, run, input.out, input.format)
+    if (input.finalOnly) run = finalSteps(run)
+    const saved = await downloadRunOutputs(ctx, client, run, input.out ?? ctx.downloadDir(), input.format)
     return { runId: run.id, status: run.status, saved }
   },
   text: (r: { saved: Array<{ step: string; path: string }> }) => (r.saved.length ? r.saved.map((f) => `${f.step}: ${f.path}`).join('\n') : 'No finished models yet.'),

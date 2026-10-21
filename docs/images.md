@@ -18,7 +18,8 @@ zetta image generate -p "a red vintage armchair, studio light, plain background"
 | `--subject object\|environment` | An object, or a whole environment |
 | `--fast` | Faster, lighter generation |
 | `--style <file>` (up to 3) | Style reference pictures |
-| `--out <folder>` | Where to save (default: here) |
+| `--out <folder>` | Where to save (default: here, or the `download.dir` setting) |
+| `--no-download` | Keep the picture in your image library only (also: `zetta config set download.auto false`) |
 
 ## Edit (paid plans)
 

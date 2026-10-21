@@ -1,10 +1,10 @@
-import { basename } from 'node:path'
+import { basename, resolve } from 'node:path'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { assertSucceeded, detectFile, fileFormat, glbToObj, glbToStl, selectResultFiles, toBase64, type Frame, type GenerationStatus } from '@zetta3d/sdk'
 import { z } from 'zod'
-import { defineCommand, pageShape, parseDuration } from '../core/define'
+import { defineCommand, pageShape } from '../core/define'
 import { usageError } from '../core/errors'
-import { downloadAsset, featureLabel, summarizeAsset, waitForAsset, type AssetSummary } from '../core/jobs'
+import { downloadAsset, downloadFinished, featureLabel, summarizeAsset, waitForAsset, waitPlan, type AssetSummary, type DownloadedFile } from '../core/jobs'
 import { inlinePicture, requireDir, requireFile, targetPath, uploadLocal } from '../core/local-files'
 import { table } from '../core/output'
 
@@ -82,28 +82,31 @@ export const assetGet = defineCommand({
 export const assetWait = defineCommand({
   path: ['asset', 'wait'],
   summary: 'Wait until an asset finishes (success, failed or cancelled).',
-  description: 'Exits 0 on success, 9 if the job failed or was cancelled, 10 if --timeout passed first (the job keeps running).',
+  description:
+    'Exits 0 on success, 9 if the job failed or was cancelled, 10 if --timeout passed first (the job keeps running). With the download.auto setting on (the default in a terminal), the results download into the current folder.',
   kind: 'read',
   positionals: [{ name: 'id', required: true }],
   input: z.object({
     id: assetId,
     timeout: z.string().optional().describe('Stop waiting after this long, e.g. 90s, 10m.'),
     out: z.string().optional().describe('Download the results into this folder when done.'),
-    format: z.array(z.string()).optional().describe('With --out: only these formats (glb, fbx, obj, usdz, …).'),
+    download: z.boolean().optional().describe('Download the results into the current folder (default: the download.auto setting). --no-download only waits.'),
+    format: z.array(z.string()).optional().describe('When downloading: only these formats (glb, fbx, obj, usdz, …).'),
   }),
   examples: ['zetta asset wait 1234 --timeout 9m', 'zetta asset wait 1234 --out ./models --format glb'],
   async run(ctx, input) {
-    const timeoutMs = parseDuration(input.timeout)
-    if (Number.isNaN(timeoutMs)) throw usageError(`--timeout "${input.timeout}" is not a duration (try 90s or 10m).`)
+    const plan = waitPlan(ctx, { ...input, wait: true })
     const client = await ctx.client()
-    const detail = await waitForAsset(ctx, client, input.id, timeoutMs)
+    const detail = await waitForAsset(ctx, client, input.id, plan.timeoutMs)
     assertSucceeded(detail.generation)
-    const summary = summarizeAsset(detail.generation, ctx.profile.siteUrl)
-    if (!input.out) return summary
-    const files = await downloadAsset(ctx, client, detail.generation, input.out, input.format ? { formats: input.format } : {})
-    return { ...summary, saved: files }
+    const summary: AssetSummary & { saved?: DownloadedFile[]; next?: string } = summarizeAsset(detail.generation, ctx.profile.siteUrl)
+    if (!plan.out) return summary
+    if (!plan.auto) return { ...summary, saved: await downloadAsset(ctx, client, detail.generation, plan.out, input.format ? { formats: input.format } : {}) }
+    const result = await downloadFinished(ctx, client, detail.generation, plan.out, input.format ?? plan.formats)
+    return { ...summary, saved: result.files, ...(result.next ? { next: result.next } : {}) }
   },
-  text: (r: AssetSummary & { saved?: Array<{ path: string }> }) => [renderAsset(r), ...(r.saved ?? []).map((f) => `  saved:    ${f.path}`)].join('\n'),
+  text: (r: AssetSummary & { saved?: Array<{ path: string }>; next?: string }) =>
+    [renderAsset(r), ...(r.saved ?? []).map((f) => `  saved:    ${f.path}`), r.next ? `  next:     ${r.next}` : ''].filter(Boolean).join('\n'),
 })
 
 export const assetDownload = defineCommand({
@@ -114,7 +117,7 @@ export const assetDownload = defineCommand({
   positionals: [{ name: 'id', required: true }],
   input: z.object({
     id: assetId,
-    out: z.string().default('.').describe('Folder to save into.'),
+    out: z.string().optional().describe('Folder to save into (default: the current folder, or the download.dir setting).'),
     format: z.array(z.string()).optional().describe('Only these formats, e.g. glb, fbx, obj, usdz, ply.'),
     primary: z.boolean().optional().describe('Only the single best model file.'),
     overwrite: z.boolean().optional().describe('Replace existing files instead of adding -2, -3 …'),
@@ -124,7 +127,7 @@ export const assetDownload = defineCommand({
     const client = await ctx.client()
     const { generation } = await client.generations.get(input.id)
     assertSucceeded(generation)
-    const files = await downloadAsset(ctx, client, generation, input.out, {
+    const files = await downloadAsset(ctx, client, generation, input.out ?? ctx.downloadDir(), {
       ...(input.format ? { formats: input.format } : {}),
       primary: Boolean(input.primary),
       overwrite: Boolean(input.overwrite),
@@ -343,7 +346,7 @@ export const assetExport = defineCommand({
     source: z.string().describe('An asset id, or a local .glb file.'),
     format: z.enum(['obj', 'fbx', 'stl']).describe('Target format.'),
     fbxPreset: z.enum(['unity', 'unreal', 'blender', 'maya', 'threejs']).optional().describe('With --format fbx: axes and units for this app (default unity).'),
-    out: z.string().default('.').describe('Folder to save into.'),
+    out: z.string().optional().describe('Folder to save into (default: the current folder, or the download.dir setting).'),
   }),
   examples: ['zetta asset export 1234 --format stl --out ./print', 'zetta asset export ./chair.glb --format obj', 'zetta asset export 1234 --format fbx --fbx-preset blender'],
   async run(ctx, input) {
@@ -377,7 +380,7 @@ export const assetExport = defineCommand({
         : input.format === 'stl'
           ? glbToStl(data, base)
           : await (await import('../export/fbx')).glbToFbx(data, base, input.fbxPreset ?? 'unity')
-    const dir = requireDir(input.out)
+    const dir = requireDir(input.out ? resolve(ctx.cwd, input.out) : ctx.downloadDir())
     const saved = files.map((file) => {
       const path = targetPath(dir, file.name, true)
       writeFileSync(path, file.bytes)

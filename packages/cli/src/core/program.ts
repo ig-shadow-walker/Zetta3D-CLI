@@ -181,8 +181,10 @@ function optionsFor(field: FieldInfo, short: string | undefined, negatable: bool
   const prefix = short ? `-${short}, ` : ''
   if (field.type === 'boolean') {
     const options = [new Option(`${prefix}--${flag}`, describe(field.description))]
-    if (field.defaultValue === true || field.key === 'wait' || negatable) {
-      options.push(new Option(`--no-${flag}`, field.key === 'wait' ? 'Do not wait (overrides the configured default).' : `Turn off --${flag}.`))
+    if (field.defaultValue === true || field.key === 'wait' || field.key === 'download' || negatable) {
+      const off =
+        field.key === 'wait' ? 'Do not wait (overrides the configured default).' : field.key === 'download' ? 'Do not download automatically.' : `Turn off --${flag}.`
+      options.push(new Option(`--no-${flag}`, off))
     }
     return options
   }

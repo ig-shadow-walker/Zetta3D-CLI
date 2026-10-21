@@ -16,12 +16,12 @@ export interface Run {
 /** Runs the CLI in-process with captured output, a temp config dir and a fake fetch. */
 export async function zetta(
   args: string[],
-  options: { fetch?: typeof fetch; env?: Record<string, string>; tty?: boolean; stdin?: string; configDir?: string } = {},
+  options: { fetch?: typeof fetch; env?: Record<string, string>; tty?: boolean; stdin?: string; configDir?: string; cwd?: string } = {},
 ): Promise<Run> {
   let stdout = ''
   let stderr = ''
   const configDir = options.configDir ?? mkdtempSync(join(tmpdir(), 'zetta-test-'))
-  const env = { ZETTA_CONFIG_DIR: configDir, ZETTA_NO_KEYCHAIN: '1', ...options.env }
+  const env = { ...homeEnv(mkdtempSync(join(tmpdir(), 'zetta-home-'))), ZETTA_CONFIG_DIR: configDir, ZETTA_NO_KEYCHAIN: '1', ...options.env }
   const stdin = Object.assign(Readable.from(options.stdin ? [options.stdin] : []), { isTTY: options.tty ?? false })
   const previous = { ...process.env }
   Object.assign(process.env, env)
@@ -33,6 +33,7 @@ export async function zetta(
       groups: GROUPS,
       env: { ...process.env, ...env },
       ...(options.fetch ? { fetch: options.fetch } : {}),
+      ...(options.cwd ? { cwd: options.cwd } : {}),
       streams: {
         stdout: { write: (c: string) => (stdout += c), isTTY: options.tty ?? false },
         stderr: { write: (c: string) => (stderr += c), isTTY: options.tty ?? false },
@@ -51,6 +52,14 @@ export async function zetta(
     for (const key of Object.keys(env)) if (!(key in previous)) delete process.env[key]
     Object.assign(process.env, previous)
   }
+}
+
+/**
+ * Points the home folder and the settings folders at `dir` on every OS. Windows reads USERPROFILE
+ * and APPDATA, not HOME, so setting HOME alone would let a test write into the real user folder.
+ */
+export function homeEnv(dir: string): Record<string, string> {
+  return { HOME: dir, USERPROFILE: dir, APPDATA: join(dir, 'AppData', 'Roaming'), XDG_CONFIG_HOME: join(dir, '.config') }
 }
 
 export function tokenFor(exp = Math.floor(Date.now() / 1000) + 30 * 86400): string {

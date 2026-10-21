@@ -1,11 +1,11 @@
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { Context } from '../core/context'
 import { defineCommand } from '../core/define'
 import { usageError } from '../core/errors'
+import { appDataDir, homeDir } from '../core/paths'
 import { SKILL_NAME, skillMarkdown } from '../guide'
 import { isCompiledBinary } from '../upgrade'
 
@@ -17,9 +17,9 @@ export function zettaExecutable(): string {
   return isCompiledBinary() ? process.execPath : 'zetta'
 }
 
-function skillPath(project: boolean, dir: string | undefined): string {
-  if (dir) return join(resolve(dir), SKILL_NAME, 'SKILL.md')
-  return project ? join(process.cwd(), '.claude', 'skills', SKILL_NAME, 'SKILL.md') : join(homedir(), '.claude', 'skills', SKILL_NAME, 'SKILL.md')
+function skillPath(ctx: Context, project: boolean, dir: string | undefined): string {
+  if (dir) return join(resolve(ctx.cwd, dir), SKILL_NAME, 'SKILL.md')
+  return join(project ? ctx.cwd : homeDir(ctx.env), '.claude', 'skills', SKILL_NAME, 'SKILL.md')
 }
 
 /** Writes a file, keeping one `.bak` of whatever was there. Returns whether anything changed. */
@@ -78,10 +78,10 @@ export function mergeMcpJson(text: string | undefined, command: string, args: st
   return `${JSON.stringify(config, null, 2)}\n`
 }
 
-function desktopConfigPath(): string {
-  if (process.platform === 'darwin') return join(homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json')
-  if (process.platform === 'win32') return join(process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'), 'Claude', 'claude_desktop_config.json')
-  return join(homedir(), '.config', 'Claude', 'claude_desktop_config.json')
+function desktopConfigPath(env: NodeJS.ProcessEnv): string {
+  if (process.platform === 'darwin') return join(homeDir(env), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json')
+  if (process.platform === 'win32') return join(appDataDir(env), 'Claude', 'claude_desktop_config.json')
+  return join(env.XDG_CONFIG_HOME || join(homeDir(env), '.config'), 'Claude', 'claude_desktop_config.json')
 }
 
 export const skillInstall = defineCommand({
@@ -94,8 +94,8 @@ export const skillInstall = defineCommand({
     project: z.boolean().optional().describe('Install for this project only (./.claude/skills).'),
     dir: z.string().optional().describe('Install into this skills folder instead.'),
   }),
-  async run(_ctx, input) {
-    const path = skillPath(Boolean(input.project), input.dir)
+  async run(ctx, input) {
+    const path = skillPath(ctx, Boolean(input.project), input.dir)
     const result = writeWithBackup(path, skillMarkdown())
     return { skill: SKILL_NAME, path, result }
   },
@@ -111,8 +111,8 @@ export const skillUninstall = defineCommand({
     project: z.boolean().optional().describe('Remove it from this project (./.claude/skills).'),
     dir: z.string().optional().describe('Remove it from this skills folder.'),
   }),
-  async run(_ctx, input) {
-    const path = skillPath(Boolean(input.project), input.dir)
+  async run(ctx, input) {
+    const path = skillPath(ctx, Boolean(input.project), input.dir)
     const existed = existsSync(path)
     if (existed) rmSync(dirname(path), { recursive: true, force: true })
     return { path, removed: existed }
@@ -177,7 +177,7 @@ export const setupCommand = defineCommand({
 
     switch (input.client) {
       case 'claude-code': {
-        write('skill', skillPath(false, undefined), skillMarkdown())
+        write('skill', skillPath(ctx, false, undefined), skillMarkdown())
         const add = ['mcp', 'add', '--scope', 'user', SKILL_NAME, '--', command, ...args]
         const shown = `claude ${add.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}`
         if (input.print) {
@@ -195,26 +195,26 @@ export const setupCommand = defineCommand({
         break
       }
       case 'claude-desktop': {
-        const path = desktopConfigPath()
+        const path = desktopConfigPath(ctx.env)
         write('mcp server', path, mergeMcpJson(read(path), command, args))
         steps.push({ what: 'next step', result: 'Restart Claude Desktop to load the server.' })
         break
       }
       case 'cursor': {
-        const path = join(homedir(), '.cursor', 'mcp.json')
+        const path = join(homeDir(ctx.env), '.cursor', 'mcp.json')
         write('mcp server', path, mergeMcpJson(read(path), command, args))
         break
       }
       case 'codex': {
-        const config = join(homedir(), '.codex', 'config.toml')
+        const config = join(homeDir(ctx.env), '.codex', 'config.toml')
         const toml = [`[mcp_servers.${SKILL_NAME}]`, `command = ${JSON.stringify(command)}`, `args = [${args.map((a) => JSON.stringify(a)).join(', ')}]`].join('\n')
         write('mcp server', config, withMarkedBlock(read(config), toml, hash))
-        const agents = join(homedir(), '.codex', 'AGENTS.md')
+        const agents = join(homeDir(ctx.env), '.codex', 'AGENTS.md')
         write('guide', agents, withMarkedBlock(read(agents), skillMarkdown().replace(/^---[\s\S]*?---\n/, ''), html))
         break
       }
       case 'agents-md': {
-        const path = join(process.cwd(), 'AGENTS.md')
+        const path = join(ctx.cwd, 'AGENTS.md')
         write('guide', path, withMarkedBlock(read(path), skillMarkdown().replace(/^---[\s\S]*?---\n/, ''), html))
         break
       }

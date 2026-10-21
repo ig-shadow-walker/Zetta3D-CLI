@@ -86,6 +86,7 @@ zetta run start 88 --max-credits 200
 ```bash
 zetta run get 88                     # every step: status, asset id, error
 zetta run wait 88 --timeout 5m       # exit 0 when done or waiting on you · 9 failed · 10 still running
+zetta run wait 88                    # in a terminal: wait, then save the final models here
 zetta run wait 88 --out ./out        # wait, then download every model it made
 zetta run outputs 88 --out ./out --final-only     # only the last step of each branch
 zetta pipeline runs 12               # recent runs of a pipeline

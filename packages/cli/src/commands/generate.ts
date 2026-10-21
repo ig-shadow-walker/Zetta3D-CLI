@@ -77,7 +77,7 @@ export const generate = defineCommand({
     'Pictures can be local files, URLs, or image:<id> from your image library.',
     'Engines: n1 (every plan), n2.5, np1, np1.5 (paid plans). See `zetta catalog engines` for what each supports.',
     'The price is checked first: use --dry-run to see it, --yes or --max-credits to spend without a prompt.',
-    'Returns at once with the asset id; add --wait to wait, or --out <folder> to wait and download.',
+    'In a terminal it waits, then downloads the results into the current folder (the download.auto setting). Scripts and agents get the asset id at once; add --wait to wait, or --out <folder> to wait and download.',
   ].join('\n'),
   kind: 'spend',
   input: z.object({
@@ -107,7 +107,7 @@ export const generate = defineCommand({
     title: z.string().max(200).optional().describe('Title in your library.'),
     tag: z.array(z.string()).optional().describe('Tags.'),
     visibility: z.enum(['public', 'private']).optional().describe('Share publicly, or keep private (private needs a paid plan).'),
-    format: z.array(z.string()).optional().describe('With --out: download only these formats (glb, fbx, obj, usdz …).'),
+    format: z.array(z.string()).optional().describe('When downloading: only these formats (glb, fbx, obj, usdz …).'),
     ...spendShape,
     ...waitShape,
   }),

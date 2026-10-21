@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from 'node:fs'
-import { basename } from 'node:path'
+import { basename, resolve } from 'node:path'
 import { extensionFor, fromBase64, toBase64, ZettaError, type ImagePost, type ImageResult, type InlineImage, type ZettaClient } from '@zetta3d/sdk'
 import { z } from 'zod'
 import type { Context } from '../core/context'
@@ -44,10 +44,17 @@ export interface SavedImages {
   imageId: number
   files: Array<{ path: string; bytes: number; contentType: string }>
   text: string | null
+  next?: string
 }
 
-function saveImages(ctx: Context, result: ImageResult, outDir: string, stem: string): SavedImages {
-  const dir = requireDir(outDir)
+/**
+ * Pictures come back with the reply, so saving them costs nothing: they save unless --no-download or
+ * the download.auto setting is false (then they stay in your image library only).
+ */
+function saveImages(ctx: Context, result: ImageResult, input: { out?: string | undefined; download?: boolean | undefined }, stem: string): SavedImages {
+  const save = Boolean(input.out) || (input.download ?? (ctx.mode === 'mcp' || ctx.config.file.download?.auto !== false))
+  if (!save) return { imageId: result.postId, files: [], text: result.text ?? null, next: `zetta image download ${result.postId}` }
+  const dir = requireDir(input.out ? resolve(ctx.cwd, input.out) : ctx.downloadDir())
   const files = result.images.map((image, index) => {
     const path = targetPath(dir, `${stem}-${result.postId}${result.images.length > 1 ? `-${index + 1}` : ''}.${extensionFor(image.contentType)}`)
     const bytes = fromBase64(image.base64)
@@ -58,13 +65,15 @@ function saveImages(ctx: Context, result: ImageResult, outDir: string, stem: str
   return { imageId: result.postId, files, text: result.text ?? null }
 }
 
-const renderSaved = (r: SavedImages) => [`Image #${r.imageId}`, ...r.files.map((f) => `  saved: ${f.path}`), r.text ? `  note: ${r.text}` : ''].filter(Boolean).join('\n')
+const renderSaved = (r: SavedImages) =>
+  [`Image #${r.imageId}`, ...r.files.map((f) => `  saved: ${f.path}`), r.text ? `  note: ${r.text}` : '', r.next ? `  next:  ${r.next}` : ''].filter(Boolean).join('\n')
 
 const common = {
   aspectRatio: z.enum(ASPECT_RATIOS).optional().describe('Aspect ratio.'),
   resolution: z.enum(RESOLUTIONS).optional().describe('Resolution (4K needs a paid plan).'),
   engine: engineField,
-  out: z.string().default('.').describe('Folder to save the picture(s) into.'),
+  out: z.string().optional().describe('Folder to save the picture(s) into (default: the current folder, or the download.dir setting).'),
+  download: z.boolean().optional().describe('Save the picture(s) (default: on, unless the download.auto setting is false). --no-download keeps them in your image library only.'),
 }
 
 export const imageGenerate = defineCommand({
@@ -97,7 +106,7 @@ export const imageGenerate = defineCommand({
       ...(input.fast ? { fast: true } : {}),
       ...(input.style?.length ? { styleReferences: input.style.map(inlinePicture) } : {}),
     }, crypto.randomUUID())
-    return saveImages(ctx, result, input.out, 'image')
+    return saveImages(ctx, result, input, 'image')
   },
   text: renderSaved,
 })
@@ -126,7 +135,7 @@ export const imageEdit = defineCommand({
       ...(input.resolution ? { resolution: input.resolution } : {}),
       ...(model ? { model } : {}),
     }, crypto.randomUUID())
-    return saveImages(ctx, result, input.out, 'edit')
+    return saveImages(ctx, result, input, 'edit')
   },
   text: renderSaved,
 })
@@ -162,7 +171,7 @@ export const imageCompose = defineCommand({
       ...(input.resolution ? { resolution: input.resolution } : {}),
       ...(model ? { model } : {}),
     }, crypto.randomUUID())
-    return saveImages(ctx, result, input.out, 'compose')
+    return saveImages(ctx, result, input, 'compose')
   },
   text: renderSaved,
 })
@@ -219,12 +228,12 @@ export const imageDownload = defineCommand({
   positionals: [{ name: 'id', required: true }],
   input: z.object({
     id: z.number().int().positive().describe('Image id.'),
-    out: z.string().default('.').describe('Folder to save into.'),
+    out: z.string().optional().describe('Folder to save into (default: the current folder, or the download.dir setting).'),
   }),
   async run(ctx, input) {
     const post = await (await ctx.client()).images.get(input.id)
     if (!post) throw new ZettaError({ code: 'NOT_FOUND', message: `There is no image #${input.id}.`, status: 404 })
-    const dir = requireDir(input.out)
+    const dir = requireDir(input.out ? resolve(ctx.cwd, input.out) : ctx.downloadDir())
     const files = []
     for (const [index, image] of post.images.entries()) {
       const path = targetPath(dir, `image-${post.id}${post.images.length > 1 ? `-${index + 1}` : ''}.${extensionFor(image.contentType)}`)

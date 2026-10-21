@@ -177,9 +177,9 @@ The full walkthrough is in [docs/getting-started.md](docs/getting-started.md), a
 
 Failed jobs are refunded automatically.
 
-**Jobs run on the server.** A paid command returns at once with the asset id:
-- `--wait` waits for the job to finish;
-- `--out <folder>` waits, then downloads the files;
+**Jobs run on the server.** In a terminal, `zetta` waits for each job and downloads the results into the folder you ran it in. Scripts and agents get the asset id at once instead.
+- `--out <folder>` waits, then downloads the files there;
+- `--no-download` (or `zetta config set download.auto false`) returns at once with the asset id;
 - `zetta asset wait <id>` picks up waiting later.
 
 If you set `--timeout`, the command exits with code 10 when that time runs out. The job keeps running.
@@ -240,7 +240,8 @@ See [docs/pipelines.md](docs/pipelines.md).
 ```bash
 zetta config list
 zetta config set spend.maxPerCommand 200   # agents may spend up to 200 credits per command
-zetta config set defaults.wait true        # wait for jobs unless --no-wait
+zetta config set download.auto false      # don't download finished jobs into the current folder
+zetta config set download.dir models      # …or collect them in ./models
 zetta config set output json               # always JSON
 zetta --profile local asset list           # built-in profile for a local backend
 zetta config add-profile staging --api https://staging-api.example.com/api --site https://staging.example.com

@@ -72,7 +72,8 @@ The parts of that command:
 - **`--engine`** picks the engine:
   - `n1` (the default) works on every plan;
   - `n2.5`, `np1` and `np1.5` need a paid plan.
-- **`--out`** waits for the job and downloads the files. Without `--wait` or `--out`, the command returns at once with the asset id, and the job keeps running on the server.
+- **`--out`** waits for the job and downloads the files.
+- **In a terminal,** finished jobs download into the current folder even without `--out`. `--no-download` (or `zetta config set download.auto false`) returns at once with the asset id instead; the job keeps running on the server. Scripts and agents always get the id at once unless they ask with `--out`, `--wait` or `--download`.
 
 Other ways in:
 
@@ -118,5 +119,5 @@ zetta asset delete 1240 --yes
 
 - **Many files at once:** write a pipeline recipe and batch-run it over a folder. See [pipelines.md](pipelines.md).
 - **Let an AI assistant drive it:** `zetta setup claude-code`, and see [ai-agents.md](ai-agents.md).
-- **Make it yours:** `zetta config set defaults.wait true` makes paid commands wait by default. See [configuration.md](configuration.md).
+- **Make it yours:** `zetta config set download.dir models` collects every download in one folder, and `download.formats glb,fbx` keeps only those formats. See [configuration.md](configuration.md).
 - **Errors:** every error names its code and suggests a next step. See [troubleshooting.md](troubleshooting.md).

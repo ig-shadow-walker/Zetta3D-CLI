@@ -83,6 +83,8 @@ Branch on `code` or on the exit code, and follow `hint`.
 
 **Long jobs.** Never block an agent's shell for minutes. Start the job (it returns at once with an `id`), then `zetta asset wait <id> --timeout 90s`, repeated while the exit code is 10. Use `--out <folder>` only when the wait fits your timeout. Pipeline runs work the same way with `zetta run wait`.
 
+**Automatic downloads.** Without a terminal, jobs don't download on their own, so the rule above holds. If the user set `download.auto true`, jobs wait and download into the current folder: pass `--no-wait` to start a job and return at once, and `asset wait --no-download` to only wait. MCP tools never download unless the call passes `download: true` or `out`.
+
 **Prompts.** There are none: without a terminal, `zetta` never prompts. `--non-interactive` (or `ZETTA_NON_INTERACTIVE=1`) enforces that even in a terminal.
 
 **Files.** Commands that take pictures or models accept local paths, and `--out` returns the paths it wrote.

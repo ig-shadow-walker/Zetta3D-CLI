@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { ZettaClient, ZettaError, tokenExpiry } from '@zetta3d/sdk'
 import { VERSION } from '../version'
@@ -30,6 +31,8 @@ export interface ContextOptions {
   budget?: { remaining: number }
   /** Receives every progress event (MCP turns them into progress notifications). */
   onProgress?: (event: ProgressEvent) => void
+  /** The folder zetta was run in: relative paths and automatic downloads start here. */
+  cwd?: string
 }
 
 export const USER_AGENT = `zetta-cli/${VERSION} (${process.platform}; ${process.arch})`
@@ -37,6 +40,7 @@ export const USER_AGENT = `zetta-cli/${VERSION} (${process.platform}; ${process.
 /** Everything a command needs: config, credentials, output and API clients. */
 export class Context {
   readonly env: NodeJS.ProcessEnv
+  readonly cwd: string
   readonly mode: 'cli' | 'mcp'
   readonly config: ConfigStore
   readonly credentials: CredentialStore
@@ -52,6 +56,7 @@ export class Context {
 
   constructor(options: ContextOptions = {}) {
     this.env = options.env ?? process.env
+    this.cwd = options.cwd ?? process.cwd()
     this.mode = options.mode ?? 'cli'
     this.streams = options.streams ?? { stdout: process.stdout, stderr: process.stderr, stdin: process.stdin }
     this.fetchImpl = options.fetch
@@ -77,6 +82,26 @@ export class Context {
   /** True when a person can answer prompts: a terminal on both ends, and not `--non-interactive`. */
   get interactive(): boolean {
     return this.mode === 'cli' && !this.noInput && Boolean(this.streams.stdin?.isTTY) && Boolean(this.streams.stderr.isTTY)
+  }
+
+  /**
+   * Where finished jobs download on their own, or undefined when they shouldn't.
+   *
+   * `--download` / `--no-download` win; then the `download.auto` setting; unset, it is on for a
+   * person at a terminal and off for scripts and agents (they ask with --out or --download).
+   * MCP tools download only when a call asks for it, because the server's folder is not the user's.
+   */
+  autoDownload(flag: boolean | undefined): { dir: string; formats?: string[] } | undefined {
+    const setting = this.config.file.download
+    const on = this.mode === 'mcp' ? flag === true : (flag ?? setting?.auto ?? this.interactive)
+    if (!on) return undefined
+    return { dir: this.downloadDir(), ...(setting?.formats?.length ? { formats: setting.formats } : {}) }
+  }
+
+  /** The folder downloads go to when no --out is given: `download.dir`, else the current folder. */
+  downloadDir(): string {
+    const dir = this.config.file.download?.dir
+    return dir ? resolve(this.cwd, dir) : this.cwd
   }
 
   get canOpenBrowser(): boolean {

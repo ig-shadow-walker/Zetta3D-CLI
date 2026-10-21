@@ -4,12 +4,13 @@ import { pipeline as P, ZettaError, type GraphPayload, type PipelineRecord, type
 import { parse as parseYaml, stringify as toYaml } from 'yaml'
 import { z } from 'zod'
 import type { Context } from '../core/context'
-import { defineCommand, spendShape } from '../core/define'
+import { defineCommand, spendShape, waitShape } from '../core/define'
 import { usageError } from '../core/errors'
+import { waitPlan, type WaitFlags, type WaitPlan } from '../core/jobs'
 import { requireFile, uploadLocal } from '../core/local-files'
 import { table } from '../core/output'
 import { authorizeSpend } from '../core/spend'
-import { summarizeRun, type RunSummary } from './run'
+import { downloadRunOutputs, downloadRunQuietly, finalSteps, summarizeRun, waitForRun, type RunSummary, type SavedOutput } from './run'
 
 const pipelineId = z.number().int().positive().describe('Pipeline id (from `zetta pipeline list`).')
 
@@ -286,12 +287,22 @@ const runShape = {
   mode: z.enum(['auto', 'manual']).default('auto').describe('auto runs every step; manual waits for you to run each step.'),
   draft: z.boolean().optional().describe('Create the runs as drafts: give per-run inputs (`zetta run set-input`), then `zetta run start`.'),
   ...spendShape,
+  ...waitShape,
 }
 
-async function startRuns(
-  ctx: Context,
-  input: { id: number; seeds: string[]; mode: 'auto' | 'manual'; draft?: boolean | undefined; yes?: boolean | undefined; maxCredits?: number | undefined; dryRun?: boolean | undefined },
-) {
+type StartInput = {
+  id: number
+  seeds: string[]
+  mode: 'auto' | 'manual'
+  draft?: boolean | undefined
+  yes?: boolean | undefined
+  maxCredits?: number | undefined
+  dryRun?: boolean | undefined
+} & WaitFlags
+
+async function startRuns(ctx: Context, input: StartInput) {
+  if (input.draft && (input.wait || input.out || input.download)) throw usageError('Drafts do not start, so there is nothing to wait for: drop --draft, or --wait/--out/--download.')
+  const plan = input.draft ? undefined : waitPlan(ctx, input)
   const client = await ctx.client()
   const record = await client.pipelines.get(input.id)
   const graph = P.parseGraph(record.graph)
@@ -328,22 +339,69 @@ async function startRuns(
     const result = await client.pipelines.batch(input.id, { mode: input.mode, seeds: resolved, graph: runGraph as unknown as GraphPayload, ...(input.draft ? { draft: true } : {}) })
     for (const run of result.runs) created.push(summarizeRun({ steps: [], graph: runGraph, pipelineId: input.id, ...run } as never))
   }
-  return {
+  const started = {
     pipelineId: input.id,
     runs: created.map((r) => ({ id: r.id, status: r.status, mode: r.mode })),
     estimatedCredits: total.credits,
     next: input.draft ? `zetta run set-input ${created[0]?.id} <step> --prompt "…" ; zetta run start ${created[0]?.id}` : `zetta run wait ${created[0]?.id} --timeout 90s`,
   }
+  return plan?.wait ? finishRuns(ctx, client, created, plan, started) : started
 }
 
-const renderStarted = (r: { dryRun?: boolean; credits?: number; runs: unknown; next?: string; estimatedCredits?: number }) =>
-  r.dryRun
-    ? `Price: about ${r.credits} credits for ${String(r.runs)} run(s) (nothing was spent).`
-    : [`Started ${(r.runs as unknown[]).length} run(s): ${(r.runs as Array<{ id: number }>).map((x) => `#${x.id}`).join(', ')} · about ${r.estimatedCredits} credits`, r.next ? `next: ${r.next}` : ''].filter(Boolean).join('\n')
+/** --wait / --out / automatic downloads: wait for every run, then download the final models of those that are done. */
+async function finishRuns(ctx: Context, client: ZettaClient, created: RunSummary[], plan: WaitPlan, started: { pipelineId: number; estimatedCredits: number }) {
+  const deadline = plan.timeoutMs === undefined ? undefined : Date.now() + plan.timeoutMs
+  const runs: RunSummary[] = []
+  const saved: SavedOutput[] = []
+  let next: string | undefined
+  for (const { id } of created) {
+    const run = await waitForRun(ctx, client, id, deadline === undefined ? undefined : Math.max(0, deadline - Date.now()))
+    const summary = summarizeRun(run)
+    runs.push(summary)
+    next ??= summary.blocked[0]?.next
+    if (run.status !== 'done' || !plan.out) continue
+    if (plan.auto) {
+      const result = await downloadRunQuietly(ctx, client, run, plan.out, plan.formats)
+      saved.push(...result.saved)
+      next ??= result.next
+    } else {
+      saved.push(...(await downloadRunOutputs(ctx, client, finalSteps(run), plan.out)))
+    }
+  }
+  const failed = runs.filter((r) => r.status === 'failed' || r.status === 'cancelled')
+  const outcome = {
+    pipelineId: started.pipelineId,
+    estimatedCredits: started.estimatedCredits,
+    runs: runs.map((r) => ({ id: r.id, status: r.status, mode: r.mode, spentCredits: r.spentCredits, blocked: r.blocked })),
+    ...(plan.out ? { saved } : {}),
+    ...(next ? { next } : {}),
+  }
+  if (failed.length) {
+    const reasons = failed.map((r) => `#${r.id} ${r.status}${r.blocked[0] ? ` (${r.blocked[0].step}: ${r.blocked[0].reason})` : ''}`).join(', ')
+    throw new ZettaError({ code: 'RUN_FAILED', message: `${failed.length} of ${runs.length} run(s) did not finish: ${reasons}.`, details: outcome })
+  }
+  return outcome
+}
+
+type StartedRun = { id: number; status: string; blocked?: RunSummary['blocked'] }
+
+const renderStarted = (r: { dryRun?: boolean; credits?: number; runs: unknown; next?: string; estimatedCredits?: number; saved?: SavedOutput[] }) => {
+  if (r.dryRun) return `Price: about ${r.credits} credits for ${String(r.runs)} run(s) (nothing was spent).`
+  const runs = r.runs as StartedRun[]
+  const lines = [`Started ${runs.length} run(s): ${runs.map((x) => `#${x.id}`).join(', ')} · about ${r.estimatedCredits} credits`]
+  if (runs.some((x) => x.blocked)) {
+    for (const run of runs) lines.push(`  #${run.id} ${run.status}${run.blocked?.length ? ` · waiting on you: ${run.blocked.map((b) => `${b.step} (${b.reason})`).join(', ')}` : ''}`)
+  }
+  for (const file of r.saved ?? []) lines.push(`  saved: ${file.path}`)
+  if (r.next) lines.push(`next: ${r.next}`)
+  return lines.join('\n')
+}
 
 export const pipelineRun = defineCommand({
   path: ['pipeline', 'run'],
   summary: 'Run a pipeline on one seed (a picture or a model).',
+  description:
+    'Returns at once with the run id, unless the final models download: with the download.auto setting on (the default in a terminal), or with --wait, --out or --download, it waits for the run and saves them. --no-wait returns at once.',
   kind: 'spend',
   positionals: [
     { name: 'id', required: true },
@@ -360,7 +418,8 @@ export const pipelineRun = defineCommand({
 export const pipelineBatch = defineCommand({
   path: ['pipeline', 'batch'],
   summary: 'Run a pipeline once per seed: many pictures, a folder, or several assets.',
-  description: 'More than 20 seeds are sent in several batches. The total price is checked against --max-credits first.',
+  description:
+    'More than 20 seeds are sent in several batches. The total price is checked against --max-credits first. Downloads work as for `pipeline run`: every run is waited for, then its final models are saved.',
   kind: 'spend',
   positionals: [
     { name: 'id', required: true },

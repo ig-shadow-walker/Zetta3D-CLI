@@ -16,9 +16,48 @@ zetta config unset <key>
 | `output` | `text`, `json`, `ndjson` | Default output format. Otherwise: text in a terminal, JSON when piped |
 | `defaults.wait` | `true` / `false` | Paid commands wait for their job unless `--no-wait` is given |
 | `defaults.engine` | `n1`, `n25`, `np1`, `np15` | Default engine for `zetta generate` |
+| `download.auto` | `true` / `false` | Download finished jobs into the folder you run `zetta` in. Unset: on in a terminal, off for scripts and agents. See [Automatic downloads](#automatic-downloads) |
+| `download.dir` | a folder | Where downloads go instead of the current folder. A relative path starts from the current folder, e.g. `models` |
+| `download.formats` | formats, comma-separated | Only these formats in automatic downloads, e.g. `glb,fbx` (default: every result file) |
 | `spend.maxPerCommand` | a number | Credits one command may spend without `--yes`; anything pricier is refused. Lets scripts and agents spend without confirming each command |
 | `spend.requireConfirm` | `true` / `false` | Ask before spending in a terminal (default `true`) |
 | `currentProfile` | a profile name | The profile used when `--profile` isn't given |
+
+## Automatic downloads
+
+When a generation, a finishing job or a pipeline run is done, `zetta` downloads the results into the folder you ran it in. You don't need `--out`.
+
+```bash
+cd ~/projects/game/assets
+zetta generate -i chair.png --engine n2.5 --max-credits 60   # waits, then saves 1234-model.glb here
+```
+
+**Turning it on or off:**
+
+```bash
+zetta config set download.auto false   # off: jobs return at once with their id
+zetta config set download.auto true    # on everywhere, scripts and agents too
+zetta config unset download.auto       # back to the default: on in a terminal only
+```
+
+For one command, `--download` turns it on and `--no-download` turns it off. `--no-wait` also skips it, because the command returns before the job is done.
+
+**What gets downloaded:**
+
+| Command | Downloads |
+|---|---|
+| `generate`, `refine …`, `splat …` | Every result file of the new asset |
+| `asset wait <id>` | Every result file of that asset |
+| `pipeline run`, `pipeline batch`, `run wait` | The final models of each run, the last step of every branch (`run outputs <id>` gets every step) |
+| `image generate`, `image edit`, `image compose` | The pictures. They come back with the reply, so they save even for scripts. Only `download.auto false` or `--no-download` keeps them in your image library alone |
+
+**Details:**
+- **Where:** files go into the current folder, or `download.dir`. They are named `<id>-<file>`, e.g. `1234-model.glb`, and existing files are never overwritten.
+- **Formats:** `download.formats glb,fbx` keeps only those. A command's own `--format` wins over it.
+- **Failures:** an automatic download never fails a finished job. If a file can't be downloaded, or none matches your formats, you get a warning and the command to download it later.
+- **`--out <folder>`** works as before: it waits and downloads into that folder, whatever the setting.
+- **Scripts and agents** get the same JSON as with `--out`. The saved paths are in `files` (or `saved`).
+- **MCP tools** never download on their own, because the server's folder isn't yours. A tool call downloads only when it passes `download: true` or `out`.
 
 Settings live in `config.json` in the config folder: `~/.config/zetta3d` (or `$XDG_CONFIG_HOME/zetta3d`). On Windows it is `%APPDATA%\zetta3d`. `ZETTA_CONFIG_DIR` overrides it.
 
