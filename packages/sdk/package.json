@@ -1,0 +1,10 @@
+{
+  "name": "@zetta3d/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Typed client for the Zetta 3D API. No terminal or file-system concerns.",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

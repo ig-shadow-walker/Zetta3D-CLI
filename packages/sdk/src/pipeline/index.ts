@@ -1,0 +1,91 @@
+/**
+ * 3D Pipelines, without the network: the graph and its types, the node catalogue, the request each
+ * node builds, the rules a graph must keep, and the friendly document agents write.
+ */
+export * from './types'
+export {
+  NODE_KINDS,
+  OFFERED_NODE_KINDS,
+  LEGACY_NODE_KINDS,
+  isNodeKind,
+  isSeed,
+  outputType,
+  inputPort,
+  settingSpec,
+  settingSpecByKey,
+  type NodeGroup,
+  type NodeKindSpec,
+  type InputPortSpec,
+  type OutputPortSpec,
+  type RunInputKind,
+  type SettingType,
+  type SettingChoice,
+  type SettingSpec,
+} from './catalogue'
+export {
+  defaultSettings,
+  settingsWithDefaults,
+  effectiveSettings,
+  toRawValue,
+  toFriendlyValue,
+  settingNotes,
+  RIG_SPEC_REPLACED_MESSAGE,
+  type SettingNote,
+} from './settings'
+export { requestFor, withRequests, nodeProblems, incomingType, INPUT_PLACEHOLDER, type NodeContext } from './request'
+export {
+  validateGraph,
+  graphWarnings,
+  checkGraph,
+  runInputProblems,
+  setOnEachRun,
+  topologicalOrder,
+  stepPositions,
+  fanOutNodes,
+  sourceOf,
+  canConnect,
+  seedType,
+  validateSeeds,
+  batchesOf,
+  problemFromServer,
+  parseGraph,
+  PROBLEM_CODES,
+  WARNING_CODES,
+  type ValidateOptions,
+} from './rules'
+export { forNewRun, withoutRunInput, newRunGraph, normalizeGraph } from './runs'
+export {
+  compilePipeline,
+  decompilePipeline,
+  runNodeChange,
+  autoLayout,
+  DOC_PROBLEM_CODES,
+  STEP_ID_PATTERN,
+  LAYOUT_SPACING,
+  type PipelineDoc,
+  type PipelineDocStep,
+  type PipelineDocFrom,
+  type StepRef,
+  type CompileOptions,
+  type CompileResult,
+  type DecompileOptions,
+  type DecompileResult,
+} from './doc'
+export { PIPELINE_DOC_JSON_SCHEMA, PIPELINE_DOC_EXAMPLES, type PipelineDocExample } from './doc-schema'
+export {
+  MODEL_CAPABILITIES,
+  GENERATE_ENGINES,
+  SMART_ENGINES,
+  DEFAULT_FORM,
+  applyFormPatch,
+  deriveSpec,
+  buildCreateRequest,
+  parameterProblems,
+  polygonBounds,
+  defaultPolygonCount,
+  hasCustomPolygonCount,
+  type GenModel,
+  type GenerateForm,
+  type GenerationSpec,
+  type ModelCapabilities,
+} from './generate-form'

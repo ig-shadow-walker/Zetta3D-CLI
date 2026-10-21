@@ -1,0 +1,26 @@
+{
+  "name": "zetta3d-cli-workspace",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "zetta": "bun run packages/cli/src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "oxlint",
+    "build": "bun run scripts/build-binaries.ts",
+    "build:local": "bun run scripts/build-binaries.ts --current",
+    "scan:vendor": "bun run scripts/scan-vendor-names.ts",
+    "docs:commands": "bun run scripts/gen-command-docs.ts",
+    "check": "bun run typecheck && bun run test && bun run lint"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.3",
+    "@types/node": "^26.6.5",
+    "oxlint": "^1.89.0",
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.10"
+  }
+}

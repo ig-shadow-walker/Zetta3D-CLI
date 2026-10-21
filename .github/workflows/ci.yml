@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Keep in step with release.yml.
+  BUN_VERSION: 1.4.2
+
+jobs:
+  check:
+    name: Check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run test
+      - run: bun run lint
+
+      - name: Shellcheck install.sh
+        if: runner.os == 'Linux'
+        run: shellcheck --shell=sh --severity=warning install/install.sh
+
+      # Builds this platform's binary, serves it from 127.0.0.1 and runs the real installer
+      # (install.sh on macOS/Linux, install.ps1 under pwsh and Windows PowerShell on Windows).
+      - name: Installer end-to-end
+        run: bun run scripts/test-install.ts
+
+      # Stock Alpine: musl detection, the busybox sh + wget path, and the libstdc++ the musl
+      # build needs (the installer adds it with apk when run as root).
+      - name: Installer end-to-end in an Alpine container
+        if: runner.os == 'Linux'
+        run: bun run scripts/test-install.ts --docker alpine:3.20
+
+  build:
+    name: Build all targets + vendor-name scan
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - run: bun install --frozen-lockfile
+
+      # Cross-compiles every target. macOS binaries built on Linux keep an invalid code signature,
+      # so these artifacts are for testing; releases are built on macOS (release.yml).
+      - run: bun run build
+
+      # Scans the sources, dist/bundle/zetta.js (our code + dependencies, as shipped) and the
+      # binaries. The word list is a repository secret; fork PRs cannot see secrets, so the scan
+      # runs for them after merge instead.
+      - name: Vendor-name scan
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          ZETTA_VENDOR_WORDS: ${{ secrets.ZETTA_VENDOR_WORDS }}
+        run: bun run scan:vendor --require-list --require-bundle
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zetta-dist-${{ github.sha }}
+          path: |
+            dist/latest.json
+            dist/v*/
+          retention-days: 14
+          if-no-files-found: error

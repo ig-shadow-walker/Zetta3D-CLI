@@ -1,0 +1,17 @@
+{
+  "name": "@zetta3d/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Zetta 3D from the terminal, built for people and AI agents.",
+  "bin": {
+    "zetta": "./src/main.ts"
+  },
+  "dependencies": {
+    "@zetta3d/sdk": "workspace:*",
+    "commander": "^15.0.0",
+    "zod": "^4.6.7",
+    "yaml": "^2.9.1",
+    "@modelcontextprotocol/sdk": "^1.32.1"
+  }
+}
