@@ -42,7 +42,7 @@ How a build is chosen:
 
 ### 1. Download host: `https://downloads.zetta3d.ai/cli/`
 
-Serve these files over HTTPS. `.github/workflows/release.yml` uploads them in this order when sync is enabled (step 3).
+Serve these files over HTTPS. Upload them in the order given in [docs/releasing.md](../docs/releasing.md): the version folder, the installers, then `latest.json` last.
 
 | Path under the base | What | Content-Type | Cache-Control |
 |---|---|---|---|
@@ -86,40 +86,21 @@ Keys are `<os>-<arch>[-musl][-baseline]`. `gz` is optional; without it clients d
 - Serve both as **`text/plain; charset=utf-8`**. With a binary content type, `irm … | iex` gets bytes instead of a script and fails.
 - Serve them over HTTPS only, and never behind a login, cookie wall or bot check, because agents and CI fetch them too.
 
-### 3. GitHub configuration
+### 3. Building and publishing a release
 
-| Name | Kind | Needed for |
-|---|---|---|
-| `ZETTA_VENDOR_WORDS` | secret | **Required.** Comma- or newline-separated vendor names for the CI and release scan. Without it, both fail on purpose (`--require-list`). |
-| `ZETTA_SYNC_DOWNLOADS` = `true` | variable | Turns on the `sync-download-host` job. It is off until this is set. |
-| `ZETTA_S3_ACCESS_KEY_ID`, `ZETTA_S3_SECRET_ACCESS_KEY` | secrets | the S3-compatible bucket behind the download host |
-| `ZETTA_S3_ENDPOINT` | secret | e.g. `https://<account-id>.r2.cloudflarestorage.com`; leave empty for AWS S3 |
-| `ZETTA_S3_BUCKET` | secret | bucket name |
-| `ZETTA_S3_PREFIX`, `ZETTA_S3_REGION` | variables (optional) | default `cli` and `auto` |
-| `APPLE_CERTIFICATE_P12_BASE64`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_KEYCHAIN_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_SPECIFIC_PASSWORD` | secrets | macOS signing and notarisation. Then uncomment that step in `release.yml`. |
-| `WINDOWS_CERTIFICATE_PFX_BASE64`, `WINDOWS_CERTIFICATE_PASSWORD` | secrets | Windows Authenticode signing with jsign. Then uncomment that step. HSM or cloud certificates (for example, Azure Trusted Signing) need different jsign flags, noted in the step. |
+Releases are built and published from your own machine; see [docs/releasing.md](../docs/releasing.md):
+- `bun run build --release` runs the checks, builds every target, runs the vendor scan and tests the installer against the result;
+- signing is optional, and the commands are in that guide;
+- publishing uploads to the download host and, optionally, npm and Homebrew.
 
-Until signing is enabled, release binaries are unsigned, apart from the ad-hoc signature the macOS builds get. That is fine for `curl`/`irm` installs, because neither marks the download as quarantined. Browser downloads would hit Gatekeeper and SmartScreen.
-
-### 4. Cutting a release
-
-1. Bump `packages/cli/package.json` (the workflow warns if it differs from the tag).
-2. Push the tag: `git tag v0.2.0 && git push origin v0.2.0`.
-3. `release.yml` runs on macOS:
-   1. It typechecks, tests and lints.
-   2. It builds every target plus the baseline builds, stamped with the tag's version.
-   3. It signs the binaries (once enabled) and recomputes `SHA256SUMS` and `latest.json`.
-   4. It runs the vendor scan.
-   5. It runs the real installer against the built files.
-   6. It creates the GitHub release with the binaries, `SHA256SUMS` and `latest.json`.
-   7. If sync is enabled, it uploads to the download host.
+Until signing is set up, release binaries are unsigned, apart from the ad-hoc signature the macOS builds get. That is fine for `curl`/`irm` installs, because neither marks the download as quarantined. Browser downloads would hit Gatekeeper and SmartScreen.
 
 ## Developing
 
 ```sh
-bun run build:local                      # this machine only -> dist/v<version>/, dist/latest.json, dist/bundle/zetta.js
-bun run build                            # every target (cross-compiles; the runtimes download once)
-bun run scripts/build-binaries.ts --version 1.2.3 --baseline
+bun run build                            # this machine only -> dist/v<version>/, dist/latest.json, dist/bundle/zetta.js
+bun run build windows alpine             # the targets you name; `bun run build all` for every one
+bun run build all --baseline --version 1.2.3
 bun run scripts/test-install.ts          # real installer against a local 127.0.0.1 host, temp HOME
 bun run scripts/test-install.ts --from-dist
 ZETTA_VENDOR_WORDS_FILE=/path/to/list bun run scan:vendor --require-list --require-bundle

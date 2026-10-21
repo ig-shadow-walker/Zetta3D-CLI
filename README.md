@@ -280,10 +280,10 @@ See [docs/configuration.md](docs/configuration.md).
 bun install
 bun run zetta -- --help        # run from source
 bun run check                  # typecheck, tests, lint
-bun run build:local            # a binary for this machine → dist/
+bun run build                  # a binary for this machine → dist/ (or: bun run build windows, all, …)
 bun run docs:commands          # regenerate docs/COMMANDS.md and skill/SKILL.md
 ```
 
 Architecture, testing, the live smoke test and agent evals are in [docs/development.md](docs/development.md). Releases are in [docs/releasing.md](docs/releasing.md).
 
-The CLI talks only to the Zetta 3D API, and never names a model vendor anywhere: not in its code, output, docs or files. CI enforces this with `bun run scan:vendor --require-list --require-bundle`; the word list lives in CI secrets.
+The CLI talks only to the Zetta 3D API, and never names a model vendor anywhere: not in its code, output, docs or files. Every release build checks this with a vendor-name scan of the sources, the bundled code and the binaries; the word list is kept outside the repository.

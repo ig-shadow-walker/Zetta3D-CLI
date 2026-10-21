@@ -2,7 +2,7 @@
  * Fails the build if a third-party model vendor's name appears in anything we ship.
  *
  * The names are NOT in this repo. They come from the environment:
- *   ZETTA_VENDOR_WORDS       comma- or newline-separated words (CI: a repository secret)
+ *   ZETTA_VENDOR_WORDS       comma- or newline-separated words
  *   ZETTA_VENDOR_WORDS_FILE  a text file (one word per line, # comments) or a .ts/.js module whose
  *                            string array(s) hold the words
  *
@@ -10,7 +10,7 @@
  *   - every file git tracks, plus untracked files that are not ignored, except node_modules/, .git/, dist/
  *   - dist/bundle/zetta.js, the minified JavaScript (our code + every dependency) that the binaries
  *     embed, written by scripts/build-binaries.ts. This is the authoritative check of what ships;
- *     --require-bundle makes its absence an error (CI).
+ *     --require-bundle makes its absence an error (release builds).
  *   - every other file under dist/, the compiled binaries byte by byte as UTF-8/Latin-1 and UTF-16LE
  *   - or, if paths are given as arguments, only those files/directories
  *
@@ -20,7 +20,7 @@
  * only what our bundle adds is reported (--raw-binaries turns this off).
  *
  * Hits are printed as file:line:column (byte offset for binaries) and the list entry number. The
- * matched word itself is never printed, so CI logs do not leak it.
+ * matched word itself is never printed, so logs do not leak it.
  *
  * Exit codes: 0 clean (or no list and no --require-list), 1 hits found, 2 usage/configuration error.
  */
@@ -38,8 +38,8 @@ const MAX_HITS_PER_FILE = 20
 const USAGE = `Usage: bun run scripts/scan-vendor-names.ts [--require-list] [--require-bundle] [--raw-binaries] [path ...]
 
 Reads the vendor words from ZETTA_VENDOR_WORDS or ZETTA_VENDOR_WORDS_FILE.
-  --require-list   fail (exit 2) when no word list is configured (CI)
-  --require-bundle fail (exit 2) when dist/bundle/zetta.js is missing (CI, after bun run build)
+  --require-list   fail (exit 2) when no word list is configured (release builds)
+  --require-bundle fail (exit 2) when dist/bundle/zetta.js is missing (release builds, after bun run build)
   --raw-binaries   do not subtract matches that come from the Bun runtime itself
   path ...         scan only these files/directories instead of the repo + dist/`
 
@@ -325,7 +325,7 @@ function main(): void {
 
   const bundle = join(ROOT, 'dist', 'bundle', 'zetta.js')
   if (values['require-bundle'] && !existsSync(bundle)) {
-    die('dist/bundle/zetta.js is missing; run `bun run build` (or build:local) before scanning')
+    die('dist/bundle/zetta.js is missing; run `bun run build` before scanning')
   }
 
   const matchers = buildMatchers(words)

@@ -137,7 +137,7 @@ function run(cmd: string, args: string[], opts: { quiet?: boolean } = {}): { ok:
 /**
  * Cross-compiled macOS binaries keep the signature of the downloaded runtime, which the appended
  * code invalidates; macOS kills such binaries on launch. Re-sign them ad hoc (real Developer ID
- * signing happens later in the release workflow).
+ * signing is a later release step, see docs/releasing.md).
  */
 function fixMacSignature(file: string): void {
   if (process.platform !== 'darwin') return
@@ -287,7 +287,7 @@ async function main(): Promise<void> {
   if (process.platform !== 'darwin' && targets.some((t) => t.startsWith('bun-darwin-'))) {
     console.warn(
       'Note: macOS binaries built on a non-macOS host keep an invalid code signature and will not launch on a Mac. ' +
-        'Build releases on macOS (as .github/workflows/release.yml does).',
+        'Build releases on macOS (docs/releasing.md).',
     )
   }
 

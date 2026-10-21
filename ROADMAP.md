@@ -40,7 +40,7 @@ All six phases are built. Only the parts that need the owner are left: a real ac
   - gzip copies that the installers and `zetta upgrade` prefer (27–41 MB, down from 66–89 MB), each checksum-checked twice;
   - `install.sh` and `install.ps1` (27 end-to-end checks), `zetta upgrade`, and a daily update notice;
   - npm packages and the Homebrew formula (`bun run package:channels`; npm verified with a local install);
-  - CI and release workflows, with npm, Homebrew, upload and signing steps that stay off until configured;
+  - a local build command for any target (`bun run build <target>`) and a local release build (`bun run build --release`). The GitHub workflows were removed on 2026-10-21 at the owner's request; signing and publishing are documented steps in `docs/releasing.md`;
   - the vendor-name scan of sources, the bundled code and the binaries.
 - **Verified for real:**
   - all four Linux builds run in Debian and Alpine containers (x64 and arm64), including FBX export and reaching the API;
@@ -53,7 +53,7 @@ All six phases are built. Only the parts that need the owner are left: a real ac
 **Not done — needs the owner:**
 - **A run with a real account:** `ZETTA_TOKEN=… bun run smoke:live`, then `--paid --budget 200`, then `bun run evals`.
 - **Hosting:** `downloads.zetta3d.ai/cli`, plus serving `zetta3d.ai/install.sh` and `install.ps1` (see `install/README.md`).
-- **Secrets and accounts:** the CI secrets and variables (see `docs/releasing.md`), code-signing certificates, the `@zetta3d` npm organisation and the Homebrew tap repository.
+- **Release setup:** the vendor word list on the release machine, the download-host keys, code-signing certificates, the `@zetta3d` npm organisation and the Homebrew tap repository (see `docs/releasing.md`).
 - **Ship B1:** commit and deploy the frontend change.
 - **Backend items** below: B3–B5 before a public launch, and B15–B26 from the audit.
 
