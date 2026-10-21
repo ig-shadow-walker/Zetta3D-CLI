@@ -224,7 +224,8 @@ function runInstaller(o: RunOpts): Promise<Run> {
   const env = installerEnv(o)
   if (IS_WINDOWS) {
     const ps = o.powershell ?? 'pwsh'
-    const cmd = `irm '${o.base ?? BASE}/install.ps1' | iex`
+    // The script always comes from the working host; ZETTA_DOWNLOAD_BASE (o.base) is what it downloads from.
+    const cmd = `irm '${BASE}/install.ps1' | iex`
     return exec([ps, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', cmd], env)
   }
   if (o.viaCurl) return exec(['sh', '-c', `curl -fsSL '${BASE}/install.sh' | sh`], env)
@@ -400,7 +401,7 @@ async function dockerCheck(image: string): Promise<void> {
   const wantMusl = musl.status === 0
   check(
     `[docker ${image}] picked the ${wantMusl ? 'musl' : 'glibc'} build`,
-    wantMusl === fetched.endsWith('-musl'),
+    wantMusl === /-musl(\.gz)?$/.test(fetched),
     `fetched ${fetched}`,
   )
 }

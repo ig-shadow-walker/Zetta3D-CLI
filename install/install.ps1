@@ -75,6 +75,19 @@
         return 200
     }
 
+    function Get-Sha256([string]$Path) {
+        # .NET directly, not Get-FileHash: that lives in a script module Windows PowerShell 5.1
+        # can fail to load (for example when started from PowerShell 7, whose module path it inherits).
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            $sha = [System.Security.Cryptography.SHA256]::Create()
+            try { $bytes = $sha.ComputeHash($stream) } finally { $sha.Dispose() }
+        } finally {
+            $stream.Dispose()
+        }
+        return ([System.BitConverter]::ToString($bytes) -replace '-', '').ToLowerInvariant()
+    }
+
     function Test-SamePath([string]$A, [string]$B) {
         $x = [Environment]::ExpandEnvironmentVariables($A).TrimEnd('\')
         $y = [Environment]::ExpandEnvironmentVariables($B).TrimEnd('\')
@@ -177,7 +190,7 @@
                 # The gzip copy is about half the size.
                 $gzTmp = "$tmp.gz"
                 if ((Get-Download "$base/v$version/$gzName" $gzTmp) -eq 404) { Fail "$base/v$version/$gzName was not found." }
-                $gzActual = (Get-FileHash -LiteralPath $gzTmp -Algorithm SHA256).Hash.ToLowerInvariant()
+                $gzActual = Get-Sha256 $gzTmp
                 if ($gzActual -ne $sums[$gzName]) {
                     Fail "checksum mismatch for $gzName (expected $($sums[$gzName]), got $gzActual). The download is corrupted or was tampered with. Nothing was installed."
                 }
@@ -190,7 +203,7 @@
                 Remove-Item -LiteralPath $gzTmp -Force -ErrorAction SilentlyContinue
             } elseif ((Get-Download "$base/v$version/$name" $tmp) -eq 404) { Fail "$base/v$version/$name was not found." }
 
-            $actual = (Get-FileHash -LiteralPath $tmp -Algorithm SHA256).Hash.ToLowerInvariant()
+            $actual = Get-Sha256 $tmp
             if ($actual -ne $sums[$name]) {
                 Fail "checksum mismatch for $name (expected $($sums[$name]), got $actual). The download is corrupted or was tampered with. Nothing was installed."
             }
