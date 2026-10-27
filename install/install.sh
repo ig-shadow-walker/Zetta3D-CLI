@@ -10,14 +10,14 @@
 # Environment overrides:
 #   ZETTA_VERSION=1.2.3      install this version instead of the latest
 #   ZETTA_INSTALL_DIR=DIR    install into DIR instead of ~/.zetta/bin
-#   ZETTA_DOWNLOAD_BASE=URL  download host (default https://downloads.zetta3d.ai/cli)
+#   ZETTA_DOWNLOAD_BASE=URL  download host (default https://downloads.zetta3d.ai/zcli)
 #   ZETTA_NO_MODIFY_PATH=1   do not touch shell startup files
 #
 # Everything runs inside main(), called on the last line, so a partly downloaded script does nothing.
 
 set -u
 
-DEFAULT_BASE="https://downloads.zetta3d.ai/cli"
+DEFAULT_BASE="https://downloads.zetta3d.ai/zcli"
 
 # ---- output ---------------------------------------------------------------------------------
 

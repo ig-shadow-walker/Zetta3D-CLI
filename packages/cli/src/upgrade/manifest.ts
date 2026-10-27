@@ -2,7 +2,7 @@
  * The release manifest format, shared by `scripts/build-binaries.ts`, the installers
  * (`install/install.sh`, `install/install.ps1`) and `zetta upgrade`.
  *
- * Layout under the download base (default https://downloads.zetta3d.ai/cli):
+ * Layout under the download base (default https://downloads.zetta3d.ai/zcli):
  *
  *   latest.json                     -> LatestManifest for the newest stable release
  *   v<version>/zetta-<key>[.exe]    -> one binary per platform key
@@ -33,7 +33,7 @@ export interface LatestManifest {
   files: Record<string, ManifestFile>
 }
 
-export const DEFAULT_DOWNLOAD_BASE = 'https://downloads.zetta3d.ai/cli'
+export const DEFAULT_DOWNLOAD_BASE = 'https://downloads.zetta3d.ai/zcli'
 
 /** The download base without a trailing slash: the argument, else `ZETTA_DOWNLOAD_BASE`, else the default. */
 export function downloadBase(base?: string): string {

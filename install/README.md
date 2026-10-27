@@ -26,7 +26,7 @@ Uninstall: delete `~/.zetta` (Windows: `%LOCALAPPDATA%\zetta`) and the `# zetta`
 |---|---|
 | `ZETTA_VERSION=1.2.3` | install this version instead of `latest.json`'s (a leading `v` is fine) |
 | `ZETTA_INSTALL_DIR=/path` | install there instead of the default folder |
-| `ZETTA_DOWNLOAD_BASE=https://…` | download host; default `https://downloads.zetta3d.ai/cli`. `zetta upgrade` reads it too |
+| `ZETTA_DOWNLOAD_BASE=https://…` | download host; default `https://downloads.zetta3d.ai/zcli`. `zetta upgrade` reads it too |
 | `ZETTA_NO_MODIFY_PATH=1` | leave shell rc files, the registry and `$GITHUB_PATH` alone |
 | `NO_COLOR=1` | no colour. Colour and progress lines only appear when output is a terminal anyway |
 
@@ -40,25 +40,26 @@ How a build is chosen:
 
 ## Handover checklist for the owner
 
-### 1. Download host: `https://downloads.zetta3d.ai/cli/`
+### 1. Download host: `https://downloads.zetta3d.ai/zcli/`
 
-Serve these files over HTTPS. Upload them in the order given in [docs/releasing.md](../docs/releasing.md): the version folder, the installers, then `latest.json` last.
+The files live in the Zetta storage bucket (DigitalOcean Spaces) under `zcli/`, served through the bucket's CDN. `downloads.zetta3d.ai` points there; the setup is in [docs/releasing.md](../docs/releasing.md). `bun run build --upload` publishes them, public, with the version folder first and `latest.json` last.
 
-| Path under the base | What | Content-Type | Cache-Control |
-|---|---|---|---|
-| `v<version>/zetta-darwin-arm64` | binary | `application/octet-stream` | `public, max-age=31536000, immutable` |
-| `v<version>/zetta-darwin-x64` | binary | 〃 | 〃 |
-| `v<version>/zetta-linux-x64`, `zetta-linux-arm64` | glibc binaries | 〃 | 〃 |
-| `v<version>/zetta-linux-x64-musl`, `zetta-linux-arm64-musl` | musl (Alpine) binaries | 〃 | 〃 |
-| `v<version>/zetta-windows-x64.exe` | binary | 〃 | 〃 |
-| `v<version>/zetta-*-baseline[.exe]` | x64 builds for CPUs without AVX2 (release builds include them) | 〃 | 〃 |
-| `v<version>/<binary>.gz` | gzip copy of each binary (about 40% of the size); the installers and `zetta upgrade` prefer it | `application/octet-stream` (no `Content-Encoding`) | 〃 |
-| `v<version>/SHA256SUMS` | `<sha256>  <file>` per line (`sha256sum -c` format) | `text/plain; charset=utf-8` | immutable |
-| `latest.json` | pointer to the newest **stable** release (format below) | `application/json` | short, e.g. `public, max-age=60` |
-| `install.sh`, `install.ps1` | copies of this folder's scripts | `text/plain; charset=utf-8` | short, e.g. `max-age=300` |
+| Path under the base | What | Content-Type |
+|---|---|---|
+| `v<version>/zetta-darwin-arm64`, `zetta-darwin-x64` | macOS binaries | `application/octet-stream` |
+| `v<version>/zetta-linux-x64`, `zetta-linux-arm64` | glibc binaries | 〃 |
+| `v<version>/zetta-linux-x64-musl`, `zetta-linux-arm64-musl` | musl (Alpine) binaries | 〃 |
+| `v<version>/zetta-windows-x64.exe` | binary | 〃 |
+| `v<version>/zetta-*-baseline[.exe]` | x64 builds for CPUs without AVX2 (release builds include them) | 〃 |
+| `v<version>/<binary>.gz` | gzip copy of each binary (about 40% of the size); the installers and `zetta upgrade` prefer it | `application/octet-stream` (no `Content-Encoding`) |
+| `v<version>/SHA256SUMS` | `<sha256>  <file>` per line (`sha256sum -c` format) | `text/plain; charset=utf-8` |
+| `latest.json` | pointer to the newest **stable** release (format below) | `application/json` |
+| `install.sh`, `install.ps1` | copies of this folder's scripts | `text/plain; charset=utf-8` |
+| `macosx/`, `windows/`, `linux/` | the newest build for each OS under its full name, with a `.sha256` beside it, for direct download links | `application/octet-stream` |
 
 Rules:
-- A `v<version>/` folder never changes after it is published. Only `latest.json` moves, and it is uploaded last.
+- A `v<version>/` folder never changes after it is published. Only `latest.json`, the installers and the per-OS folders move.
+- **CDN cache:** keep the bucket CDN's cache time short (for example 5 minutes), or purge `zcli/` after each release. Otherwise new installs keep getting the previous `latest.json` until the cache expires.
 - Prereleases (`v1.2.0-beta.1`) get their folder but do not move `latest.json`. Install one with `ZETTA_VERSION=1.2.0-beta.1`.
 - Each binary is 65–90 MB uncompressed (the Bun runtime is inside); the `.gz` copies the installers download are 27–41 MB. Serve the `.gz` files as plain bytes: the installers unpack them themselves, so the host must not add `Content-Encoding: gzip`.
 
@@ -81,9 +82,8 @@ Keys are `<os>-<arch>[-musl][-baseline]`. `gz` is optional; without it clients d
 
 ### 2. `zetta3d.ai/install.sh` and `zetta3d.ai/install.ps1`
 
-- `https://zetta3d.ai/install.sh` must serve this folder's `install.sh`. `https://zetta3d.ai/install.ps1` must serve `install.ps1`.
-- Either serve them directly (for example, as static files of the web app), or proxy or redirect (301/302) to `https://downloads.zetta3d.ai/cli/install.sh` and `/install.ps1`. `curl -L` and `irm` both follow redirects.
-- Serve both as **`text/plain; charset=utf-8`**. With a binary content type, `irm … | iex` gets bytes instead of a script and fails.
+- The website's `server.mjs` (in `Zetta3D-Frontend`) answers both with a `302` to `https://downloads.zetta3d.ai/zcli/install.sh` and `/install.ps1`, the copies `--upload` publishes. Set `CLI_DOWNLOAD_BASE` on the web service to send them elsewhere. `curl -L` and `irm` both follow redirects.
+- The bucket serves both as **`text/plain; charset=utf-8`**. With a binary content type, `irm … | iex` would get bytes instead of a script and fail.
 - Serve them over HTTPS only, and never behind a login, cookie wall or bot check, because agents and CI fetch them too.
 
 ### 3. Building and publishing a release
@@ -91,7 +91,7 @@ Keys are `<os>-<arch>[-musl][-baseline]`. `gz` is optional; without it clients d
 Releases are built and published from your own machine; see [docs/releasing.md](../docs/releasing.md):
 - `bun run build --release` runs the checks, builds every target, runs the vendor scan and tests the installer against the result;
 - signing is optional, and the commands are in that guide;
-- publishing uploads to the download host and, optionally, npm and Homebrew.
+- `--upload` publishes the builds and the installers' files to the bucket; npm and Homebrew are optional extras.
 
 Until signing is set up, release binaries are unsigned, apart from the ad-hoc signature the macOS builds get. That is fine for `curl`/`irm` installs, because neither marks the download as quarantined. Browser downloads would hit Gatekeeper and SmartScreen.
 

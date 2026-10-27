@@ -9,14 +9,14 @@
 # Environment overrides (set them first, e.g. $env:ZETTA_VERSION = '1.2.3'):
 #   ZETTA_VERSION          install this version instead of the latest
 #   ZETTA_INSTALL_DIR      install into this folder instead of %LOCALAPPDATA%\zetta\bin
-#   ZETTA_DOWNLOAD_BASE    download host (default https://downloads.zetta3d.ai/cli)
+#   ZETTA_DOWNLOAD_BASE    download host (default https://downloads.zetta3d.ai/zcli)
 #   ZETTA_NO_MODIFY_PATH=1 do not change the user PATH
 #
 # Everything is inside a script block that runs on the last line, so a partly downloaded script
 # does nothing, and no variables or preferences leak into your session.
 
 & {
-    $DefaultBase = 'https://downloads.zetta3d.ai/cli'
+    $DefaultBase = 'https://downloads.zetta3d.ai/zcli'
 
     # Scoped to this block: hide the slow progress bar of Invoke-WebRequest in Windows PowerShell.
     $ProgressPreference = 'SilentlyContinue'

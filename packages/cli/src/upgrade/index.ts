@@ -86,7 +86,7 @@ export function isCompiledBinary(execPath: string = process.execPath): boolean {
 }
 
 export interface UpgradeOptions {
-  /** Download base; defaults to `ZETTA_DOWNLOAD_BASE` or https://downloads.zetta3d.ai/cli. */
+  /** Download base; defaults to `ZETTA_DOWNLOAD_BASE` or https://downloads.zetta3d.ai/zcli. */
   base?: string
   /** Install exactly this version (may be older). Default: the latest release, only if newer. */
   version?: string

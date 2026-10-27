@@ -7,6 +7,7 @@
  *   bun run build all                  # every release target
  *   bun run build --release            # a release: checks, every target + baseline, vendor scan, installer test
  *   bun run build --list               # every target name
+ *   bun run build all --upload         # build, then publish to the storage bucket under zcli/ (scripts/upload-spaces.ts)
  *
  * Output: release/<platform>/zetta[.exe], one folder per platform (macos-arm64, linux-x64-musl,
  * windows-x64, …), plus release/SHA256SUMS. Building one platform leaves the other folders alone.
@@ -22,6 +23,7 @@ import { parseArgs } from 'node:util'
 import { binaryName, keyFromBinaryName, normalizeVersion } from '../packages/cli/src/upgrade/manifest'
 import { platformKey } from '../packages/cli/src/upgrade/platform'
 import { BASELINE_TARGETS, TARGETS } from './build-binaries'
+import { releasePlan, spacesConfig, storageKey, uploadObjects, type SpacesConfig } from './upload-spaces'
 
 const ROOT = resolve(import.meta.dirname, '..')
 const RELEASE = join(ROOT, 'release')
@@ -53,6 +55,9 @@ Options:
   --outdir <dir>      output folder (default: dist)
   --skip-smoke        do not test-run this machine's binary after building
   --collect           only copy the binaries in dist/v<version>/ into release/ again (after signing them)
+  --upload            then publish the builds to the storage bucket under zcli/: zcli/macosx/zetta-darwin-arm64,
+                      zcli/windows/zetta-windows-x64.exe, zcli/linux/…, and, once every platform is built,
+                      the files the one-line installers read (needs the SPACES_* settings; docs/releasing.md)
   --list              list every target and where it goes
   -h, --help          show this help`
 
@@ -142,7 +147,7 @@ function step(title: string, cmd: string[], env: NodeJS.ProcessEnv = process.env
   }
 }
 
-function main(): void {
+async function main(): Promise<void> {
   let parsed
   try {
     parsed = parseArgs({
@@ -154,6 +159,7 @@ function main(): void {
         outdir: { type: 'string', default: 'dist' },
         'skip-smoke': { type: 'boolean', default: false },
         collect: { type: 'boolean', default: false },
+        upload: { type: 'boolean', default: false },
         list: { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
       },
@@ -165,7 +171,11 @@ function main(): void {
   const { values, positionals } = parsed
   if (values.help) return console.log(USAGE)
   if (values.list) {
-    for (const key of KEYS) console.log(`  ${key.padEnd(26)} release/${platformFolder(key)}/${shortName(key)}${key === platformKey() ? '   (this machine)' : ''}`)
+    console.log(`  ${'target'.padEnd(26)} ${'built into'.padEnd(40)} uploaded to (--upload)`)
+    for (const key of KEYS) {
+      const local = `release/${platformFolder(key)}/${shortName(key)}`
+      console.log(`  ${key.padEnd(26)} ${local.padEnd(40)} ${storageKey(key)}${key === platformKey() ? '   (this machine)' : ''}`)
+    }
     return
   }
 
@@ -188,6 +198,17 @@ function main(): void {
   const bun = process.execPath
   const versionDir = resolve(ROOT, values.outdir, `v${version}`)
 
+  // Check the storage settings before the long build, not after it.
+  let storage: SpacesConfig | undefined
+  if (values.upload) {
+    try {
+      storage = spacesConfig()
+    } catch (error) {
+      console.error(`build: ${(error as Error).message}`)
+      process.exit(2)
+    }
+  }
+
   if (values.collect) {
     if (!existsSync(versionDir)) {
       console.error(`build: ${relative(ROOT, versionDir)} does not exist; build first.`)
@@ -195,6 +216,7 @@ function main(): void {
     }
     const built = readdirSync(versionDir).map((name) => keyFromBinaryName(name)).filter((key): key is string => Boolean(key))
     report(collect(versionDir, built))
+    if (storage) await upload(storage, version, versionDir, built)
     return
   }
 
@@ -229,7 +251,35 @@ function main(): void {
   }
 
   report(collect(versionDir, keys))
+  if (storage) await upload(storage, version, versionDir, keys)
   if (keys.includes(platformKey())) console.log(`\nTry it: ${relative(ROOT, join(RELEASE, platformFolder(platformKey()), shortName(platformKey())))} --version`)
+}
+
+async function upload(storage: SpacesConfig, version: string, versionDir: string, keys: string[]): Promise<void> {
+  const plan = releasePlan({
+    version,
+    versionDir,
+    latestJson: join(versionDir, '..', 'latest.json'),
+    installDir: join(ROOT, 'install'),
+    keys,
+    releaseKeys: RELEASE_KEYS,
+  })
+  if (!plan.objects.length) {
+    console.error(`\nbuild: nothing to upload. ${plan.note ?? ''}`)
+    process.exit(1)
+  }
+  console.log(`\n▸ Publish ${plan.objects.length} files to the ${storage.bucket} bucket under zcli/ (public, replacing what is there)`)
+  try {
+    await uploadObjects(plan.objects, storage, (line) => console.log(line))
+  } catch (error) {
+    console.error(`\nbuild: the upload failed: ${(error as Error).message}`)
+    console.error(`The builds are in release/ and ${relative(ROOT, versionDir)}; rerun with --collect --upload to try again.`)
+    process.exit(1)
+  }
+  console.log('\nPublished:')
+  for (const key of keys) if (plan.objects.some((o) => o.key === storageKey(key))) console.log(`  ${storage.publicBase}/${storageKey(key)}`)
+  if (plan.installers) console.log(`  ${storage.publicBase}/zcli/latest.json now points at ${version}; the one-line installers install it.`)
+  if (plan.note) console.log(`\nNote: ${plan.note}`)
 }
 
 function report(files: string[]): void {
@@ -237,4 +287,4 @@ function report(files: string[]): void {
   for (const file of files) console.log(`  ${relative(ROOT, file).padEnd(40)} ${(statSync(file).size / 1024 / 1024).toFixed(1).padStart(6)} MB`)
 }
 
-if (import.meta.main) main()
+if (import.meta.main) await main()

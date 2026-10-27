@@ -52,7 +52,7 @@ All six phases are built. Only the parts that need the owner are left: a real ac
 
 **Not done — needs the owner:**
 - **A run with a real account:** `ZETTA_TOKEN=… bun run smoke:live`, then `--paid --budget 200`, then `bun run evals`.
-- **Hosting:** `downloads.zetta3d.ai/cli`, plus serving `zetta3d.ai/install.sh` and `install.ps1` (see `install/README.md`).
+- **Hosting:** `downloads.zetta3d.ai/zcli`, plus serving `zetta3d.ai/install.sh` and `install.ps1` (see `install/README.md`).
 - **Release setup:** the vendor word list on the release machine, the download-host keys, code-signing certificates, the `@zetta3d` npm organisation and the Homebrew tap repository (see `docs/releasing.md`).
 - **Ship B1:** commit and deploy the frontend change.
 - **Backend items** below: B3–B5 before a public launch, and B15–B26 from the audit.

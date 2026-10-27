@@ -5,7 +5,7 @@
  *   dist/npm/<package>/      npm packages: `@zetta3d/cli` (a tiny launcher) plus one package per
  *                            platform carrying the binary, picked by npm through os/cpu/libc
  *
- *   bun run package:channels [--download-base https://downloads.zetta3d.ai/cli]
+ *   bun run package:channels [--download-base https://downloads.zetta3d.ai/zcli]
  *
  * Nothing is published. The release workflow (or the owner) publishes the npm packages with
  * `npm publish --access public` in each folder, platform packages first, and commits the formula
