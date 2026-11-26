@@ -10,7 +10,7 @@ curl -fsSL https://zetta3d.ai/install.sh | sh        # macOS, Linux (wget -qO- .
 irm https://zetta3d.ai/install.ps1 | iex             # Windows (PowerShell 5.1 or 7+)
 ```
 
-The installer detects the OS and CPU, downloads the matching self-contained binary from the download host, checks its SHA-256, test-runs it, and moves it into place atomically. It needs no sudo or admin rights. It then adds the folder to `PATH`, installs the agent skill and, in a terminal, starts the browser sign-in (`zetta auth login`). Running it again upgrades in place. `zetta upgrade` does the same from inside the CLI.
+The installer detects the OS and CPU, downloads the matching self-contained binary from the newest GitHub release, checks its SHA-256, test-runs it, and moves it into place atomically. It needs no sudo or admin rights. It then adds the folder to `PATH`, installs the agent skill and, in a terminal, starts the browser sign-in (`zetta auth login`). Running it again upgrades in place. `zetta upgrade` does the same from inside the CLI.
 
 | | macOS / Linux | Windows |
 |---|---|---|
@@ -24,9 +24,9 @@ Uninstall: delete `~/.zetta` (Windows: `%LOCALAPPDATA%\zetta`) and the `# zetta`
 
 | Variable | Effect |
 |---|---|
-| `ZETTA_VERSION=1.2.3` | install this version instead of `latest.json`'s (a leading `v` is fine) |
+| `ZETTA_VERSION=1.2.3` | install this version instead of the latest (a leading `v` is fine) |
 | `ZETTA_INSTALL_DIR=/path` | install there instead of the default folder |
-| `ZETTA_DOWNLOAD_BASE=https://…` | download host; default `https://downloads.zetta3d.ai/zcli`. `zetta upgrade` reads it too |
+| `ZETTA_DOWNLOAD_BASE=https://…` | where releases live; default `https://github.com/ig-shadow-walker/Zetta3D-CLI/releases`. `zetta upgrade` reads it too |
 | `ZETTA_NO_MODIFY_PATH=1` | leave shell rc files, the registry and `$GITHUB_PATH` alone |
 | `ZETTA_NO_LOGIN=1` | don't start the browser sign-in after installing (otherwise started when a person is at the terminal) |
 | `ZETTA_NO_SKILL=1` | don't install the agent skill for Claude Code, Codex and Cursor (otherwise installed for each one found) |
@@ -40,30 +40,34 @@ How a build is chosen:
 - **Windows on Arm:** gets the x64 build, which runs under emulation, unless the release has a native `windows-arm64` build.
 - **Unsupported systems:** anything else (FreeBSD, 32-bit, Git Bash on Windows) gets a clear message.
 
-## Handover checklist for the owner
+## How releases are hosted
 
-### 1. Download host: `https://downloads.zetta3d.ai/zcli/`
+### 1. GitHub releases
 
-The files live in the Zetta storage bucket (DigitalOcean Spaces) under `zcli/`, served through the bucket's CDN. `downloads.zetta3d.ai` points there; the setup is in [docs/releasing.md](../docs/releasing.md). `bun run build --upload` publishes them, public, with the version folder first and `latest.json` last.
+Every release is a GitHub release of [ig-shadow-walker/Zetta3D-CLI](https://github.com/ig-shadow-walker/Zetta3D-CLI/releases), tagged `v<version>`. `bun run release` creates it (see [docs/releasing.md](../docs/releasing.md)). Its files:
 
-| Path under the base | What | Content-Type |
+| File | What | Content-Type |
 |---|---|---|
-| `v<version>/zetta-darwin-arm64`, `zetta-darwin-x64` | macOS binaries | `application/octet-stream` |
-| `v<version>/zetta-linux-x64`, `zetta-linux-arm64` | glibc binaries | 〃 |
-| `v<version>/zetta-linux-x64-musl`, `zetta-linux-arm64-musl` | musl (Alpine) binaries | 〃 |
-| `v<version>/zetta-windows-x64.exe` | binary | 〃 |
-| `v<version>/zetta-*-baseline[.exe]` | x64 builds for CPUs without AVX2 (release builds include them) | 〃 |
-| `v<version>/<binary>.gz` | gzip copy of each binary (about 40% of the size); the installers and `zetta upgrade` prefer it | `application/octet-stream` (no `Content-Encoding`) |
-| `v<version>/SHA256SUMS` | `<sha256>  <file>` per line (`sha256sum -c` format) | `text/plain; charset=utf-8` |
-| `latest.json` | pointer to the newest **stable** release (format below) | `application/json` |
-| `install.sh`, `install.ps1` | copies of this folder's scripts | `text/plain; charset=utf-8` |
-| `macosx/`, `windows/`, `linux/` | the newest build for each OS under its full name, with a `.sha256` beside it, for direct download links | `application/octet-stream` |
+| `zetta-darwin-arm64`, `zetta-darwin-x64` | macOS builds | `application/octet-stream` |
+| `zetta-linux-x64`, `zetta-linux-arm64` | glibc Linux builds | 〃 |
+| `zetta-linux-x64-musl`, `zetta-linux-arm64-musl` | musl (Alpine) builds | 〃 |
+| `zetta-windows-x64.exe` | Windows build | 〃 |
+| `zetta-*-baseline[.exe]` | x64 builds for CPUs without AVX2 | 〃 |
+| `<build>.gz` | a gzip copy of each build (about 40% of the size); the installers and `zetta upgrade` prefer it | `application/gzip` |
+| `SHA256SUMS` | `<sha256>  <file>` per line (`sha256sum -c` format) | `text/plain; charset=utf-8` |
+| `latest.json` | the version and the checksum of every build (format below) | `application/json` |
+| `install.sh`, `install.ps1` | this folder's installers | `text/plain; charset=utf-8` |
+
+Where clients read them:
+- **The newest stable release:** `https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/<file>`. The installers and installed copies read `latest.json` from there.
+- **One version:** `https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/download/v<version>/<file>`. Pinned installs (`ZETTA_VERSION`) and `zetta upgrade --to` read from there.
+
+GitHub answers each download with a redirect to its file host; `curl`, `wget`, PowerShell and `zetta upgrade` all follow it. Release downloads are not subject to GitHub's API rate limits.
 
 Rules:
-- A `v<version>/` folder never changes after it is published. Only `latest.json`, the installers and the per-OS folders move.
-- **CDN cache:** keep the bucket CDN's cache time short (for example 5 minutes), or purge `zcli/` after each release. Otherwise new installs keep getting the previous `latest.json` until the cache expires.
-- Prereleases (`v1.2.0-beta.1`) get their folder but do not move `latest.json`. Install one with `ZETTA_VERSION=1.2.0-beta.1`.
-- Each binary is 65–90 MB uncompressed (the Bun runtime is inside); the `.gz` copies the installers download are 27–41 MB. Serve the `.gz` files as plain bytes: the installers unpack them themselves, so the host must not add `Content-Encoding: gzip`.
+- A published version never changes. Only "latest" moves, when a newer stable release is published.
+- Prereleases (`v1.2.0-beta.1`) are published but never become "latest". Install one with `ZETTA_VERSION=1.2.0-beta.1`.
+- Each build is 65–90 MB (the runtime is inside); the `.gz` copies the installers download are 27–41 MB. The installers unpack them themselves.
 
 `latest.json` (shared by the installers and `zetta upgrade`; produced by `scripts/build-binaries.ts`):
 
@@ -80,22 +84,21 @@ Rules:
 }
 ```
 
-Keys are `<os>-<arch>[-musl][-baseline]`. `gz` is optional; without it clients download the plain binary. Both the `.gz` and the unpacked binary are checked against `SHA256SUMS`. The shell and PowerShell installers read only `version` from this file and take checksums from `v<version>/SHA256SUMS`, so a pinned `ZETTA_VERSION` works the same way.
+Keys are `<os>-<arch>[-musl][-baseline]`. `gz` is optional; without it clients download the plain build. Both the `.gz` and the unpacked build are checked against `SHA256SUMS`. The shell and PowerShell installers read only `version` from this file and take checksums from `SHA256SUMS`, so a pinned `ZETTA_VERSION` works the same way.
+
+Any other `ZETTA_DOWNLOAD_BASE` (one that doesn't end in `/releases`) is read as a plain folder: `<base>/latest.json` and `<base>/v<version>/<file>`. That is for mirrors and local tests.
 
 ### 2. `zetta3d.ai/install.sh` and `zetta3d.ai/install.ps1`
 
-- The website answers both with a `302` to `https://downloads.zetta3d.ai/zcli/install.sh` and `/install.ps1`, the copies `--upload` publishes. Its `CLI_DOWNLOAD_BASE` setting sends them elsewhere. `curl -L` and `irm` both follow redirects.
-- The bucket serves both as **`text/plain; charset=utf-8`**. With a binary content type, `irm … | iex` would get bytes instead of a script and fail.
-- Serve them over HTTPS only, and never behind a login, cookie wall or bot check, because agents and CI fetch them too.
+- The website answers both with a `302` to the newest release's copy: `https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh` (and `install.ps1`). Its `CLI_DOWNLOAD_BASE` setting can send them elsewhere.
+- The release uploads both as `text/plain`: with a binary content type, `irm … | iex` could get bytes instead of a script.
+- Without the website, the same lines work straight from GitHub: `curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh`.
 
 ### 3. Building and publishing a release
 
-Releases are built and published from your own machine; see [docs/releasing.md](../docs/releasing.md):
-- `bun run release patch` (or `minor`, `major`, `0.2.0`) sets the version, runs the checks, builds every target, runs the vendor scan, tests the installer and publishes to the bucket;
-- signing is optional, and the commands are in that guide;
-- `--upload` publishes the builds and the installers' files to the bucket; npm and Homebrew are optional extras.
+`bun run release` does it all from your own machine: version, checks, every build, the vendor scan, the installer test, the git tag, and the GitHub release. See [docs/releasing.md](../docs/releasing.md).
 
-Until signing is set up, release binaries are unsigned, apart from the ad-hoc signature the macOS builds get. That is fine for `curl`/`irm` installs, because neither marks the download as quarantined. Browser downloads would hit Gatekeeper and SmartScreen.
+Until signing is set up, release builds are unsigned, apart from the ad-hoc signature the macOS builds get. That is fine for the one-line installers, because neither `curl` nor `irm` marks the download as quarantined. A build downloaded with a browser hits Gatekeeper (`xattr -d com.apple.quarantine zetta` clears it) or SmartScreen.
 
 ## Developing
 
@@ -103,7 +106,7 @@ Until signing is set up, release binaries are unsigned, apart from the ad-hoc si
 bun run build                            # this machine -> release/<platform>/zetta, plus dist/v<version>/, dist/latest.json, dist/bundle/zetta.js
 bun run build windows alpine             # the targets you name; `bun run build all` for every one
 bun run build all --baseline --version 1.2.3
-bun run scripts/test-install.ts          # real installer against a local 127.0.0.1 host, temp HOME
+bun run scripts/test-install.ts          # real installer against a local stand-in for GitHub releases, temp HOME
 bun run scripts/test-install.ts --from-dist
 ZETTA_VENDOR_WORDS_FILE=/path/to/list bun run scan:vendor --require-list --require-bundle
 ```

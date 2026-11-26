@@ -191,7 +191,7 @@ function howItWorks(theme: 'dark' | 'light'): string {
   const H = 330
   const cols = [
     { x: 51, title: 'You or your agent', items: ['Claude Code · Codex', 'Cursor · Claude Desktop', 'scripts · CI'] },
-    { x: 367, title: 'zetta', items: ['96 commands · JSON', 'MCP server · skill', 'spend guard'], accent: true },
+    { x: 367, title: 'zetta', items: ['100+ commands · JSON', 'MCP server · skill', 'spend guard'], accent: true },
     { x: 683, title: 'Zetta 3D', items: ['generate · refine', 'splat · images', 'pipelines · library'] },
     { x: 999, title: 'Your files', items: ['GLB · FBX · OBJ', 'STL · USDZ · glTF', 'PLY'] },
   ]

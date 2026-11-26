@@ -9,6 +9,7 @@ import {
   binaryName,
   compareVersions,
   downloadBase,
+  latestUrl,
   normalizeVersion,
   parseChecksums,
   parseManifest,
@@ -19,13 +20,12 @@ import {
 import { candidateKeys, platformKey } from './platform'
 
 export type { LatestManifest, ManifestFile } from './manifest'
-export { compareVersions, DEFAULT_DOWNLOAD_BASE, downloadBase } from './manifest'
+export { compareVersions, DEFAULT_DOWNLOAD_BASE, downloadBase, latestUrl, RELEASE_REPO, versionUrl } from './manifest'
 export { platformKey } from './platform'
 
 /** How to (re)install from where this build's releases live. */
 function installHint(): string {
-  const base = downloadBase()
-  return `curl -fsSL ${base}/install.sh | sh   (Windows: irm ${base}/install.ps1 | iex)`
+  return `curl -fsSL ${latestUrl(undefined, 'install.sh')} | sh   (Windows: irm ${latestUrl(undefined, 'install.ps1')} | iex)`
 }
 
 export type InstallMethod = 'binary' | 'homebrew' | 'npm' | 'source'
@@ -81,9 +81,9 @@ async function get(url: string, fetchImpl: typeof fetch, accept: string): Promis
   return res
 }
 
-/** Fetches and validates `<base>/latest.json`. `base` defaults to `ZETTA_DOWNLOAD_BASE` or the production host. */
+/** Fetches and validates the newest release's latest.json. `base` defaults to `ZETTA_DOWNLOAD_BASE` or the GitHub releases. */
 export async function fetchLatest(base?: string, fetchImpl: typeof fetch = fetch): Promise<LatestManifest> {
-  const url = `${downloadBase(base)}/latest.json`
+  const url = latestUrl(base, 'latest.json')
   const res = await get(url, fetchImpl, 'application/json')
   let data: unknown
   try {
@@ -114,7 +114,7 @@ export function isCompiledBinary(execPath: string = process.execPath): boolean {
 }
 
 export interface UpgradeOptions {
-  /** Download base; defaults to `ZETTA_DOWNLOAD_BASE` or https://downloads.zetta3d.ai/zcli. */
+  /** Download base; defaults to `ZETTA_DOWNLOAD_BASE` or the GitHub releases (see RELEASE_REPO). */
   base?: string
   /** Install exactly this version (may be older). Default: the latest release, only if newer. */
   version?: string

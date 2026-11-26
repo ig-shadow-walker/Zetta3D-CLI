@@ -1,15 +1,16 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { createInterface } from 'node:readline/promises'
 import { configDir } from './core/paths'
-import { compareVersions, fetchLatest, isCompiledBinary, upgradeCommand } from './upgrade'
+import { compareVersions, fetchLatest, isCompiledBinary, upgradeCommand, upgradeSelf } from './upgrade'
 import { VERSION } from './version'
 
 /** How often to look for a new release: soon after one is published, at most one request an hour. */
 const CHECK_EVERY = 60 * 60 * 1000
-/** How often to repeat the notice for the same version. */
+/** How often to ask again (or repeat the notice) for the same version. */
 const REMIND_EVERY = 12 * 60 * 60 * 1000
-/** The check never holds up a command for longer than this. */
-const CHECK_TIMEOUT = 1500
+/** The check never holds up a command for longer than this (GitHub answers with one redirect). */
+const CHECK_TIMEOUT = 2000
 
 interface UpdateCache {
   checkedAt?: number
@@ -82,21 +83,68 @@ export async function refreshUpdateCheck(
   return knownUpdate(env, compiled)
 }
 
+export interface NotifyOptions {
+  write?: (text: string) => void
+  /** stdout and stderr are a terminal (default: detected). */
+  terminal?: boolean
+  /** Someone can answer a question: stdin is a terminal and prompts are allowed (default: detected). */
+  interactive?: boolean
+  /** Asks a question and returns the answer (default: reads a line from the terminal). */
+  ask?: (question: string) => Promise<string>
+  /** Upgrades this copy (default: `zetta upgrade`'s own upgrade). */
+  upgrade?: (onProgress: (message: string) => void) => Promise<{ to: string; upgraded: boolean }>
+  /** The command that upgrades this copy (default: detected from how it was installed). */
+  upgradeWith?: string
+  fetchLatest?: typeof fetchLatest
+  compiled?: boolean
+}
+
+async function askTerminal(question: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stderr })
+  rl.on('SIGINT', () => rl.close())
+  try {
+    return await rl.question(question)
+  } catch {
+    return 'n' // closed (Ctrl-C or Ctrl-D): treat as "not now"
+  } finally {
+    rl.close()
+  }
+}
+
 /**
- * "A new version is out" on stderr, for people at a terminal: never when output is piped, in CI,
- * from source, or with ZETTA_NO_UPDATE_CHECK=1. Agents learn about updates from `zetta upgrade
- * --check` (the skill tells them to run it) and from the MCP server's instructions.
+ * After a command, for people at a terminal, when a newer release is out: asks "Update now?" and
+ * upgrades on yes, or, when nobody can answer (or a package manager owns this copy), prints how to
+ * update. At most once every 12 hours per version. Never when output is piped, in CI, from source,
+ * or with ZETTA_NO_UPDATE_CHECK=1. Agents learn about updates from `zetta upgrade --check` (the skill
+ * tells them to run it) and from the MCP server's instructions.
  */
-export async function maybeNotifyUpdate(
-  env: NodeJS.ProcessEnv = process.env,
-  options: { write?: (text: string) => void; terminal?: boolean; fetchLatest?: typeof fetchLatest; compiled?: boolean } = {},
-): Promise<void> {
+export async function maybeNotifyUpdate(env: NodeJS.ProcessEnv = process.env, options: NotifyOptions = {}): Promise<void> {
   const terminal = options.terminal ?? Boolean(process.stderr.isTTY && process.stdout.isTTY)
   if (!terminal || env.CI) return
   const update = await refreshUpdateCheck(env, options.fetchLatest, options.compiled)
   if (!update) return
   const cache = readCache(env)
   if (cache.notifiedVersion === update.latest && cache.notifiedAt && Date.now() - cache.notifiedAt < REMIND_EVERY) return
-  ;(options.write ?? ((text) => process.stderr.write(text)))(`\nzetta ${update.latest} is out (you have ${update.current}). Update with: ${update.upgradeWith}\n`)
   writeCache(env, { ...cache, notifiedAt: Date.now(), notifiedVersion: update.latest })
+
+  const write = options.write ?? ((text) => process.stderr.write(text))
+  const interactive = options.interactive ?? (Boolean(process.stdin.isTTY) && env.ZETTA_NON_INTERACTIVE !== '1')
+  const news = `zetta ${update.latest} is out (you have ${update.current}).`
+  const upgradeWith = options.upgradeWith ?? update.upgradeWith
+  // Homebrew and npm own their copies, so those get the package manager's command instead.
+  if (!interactive || upgradeWith !== 'zetta upgrade') {
+    write(`\n${news} Update with: ${upgradeWith}\n`)
+    return
+  }
+  const answer = (await (options.ask ?? askTerminal)(`\n${news} Update now? [Y/n] `)).trim()
+  if (answer && !/^y(es)?$/i.test(answer)) {
+    write(`Not now. Update any time with: zetta upgrade\n`)
+    return
+  }
+  try {
+    const result = await (options.upgrade ?? ((onProgress) => upgradeSelf({ onProgress })))((message) => write(`  ${message}\n`))
+    write(result.upgraded ? `Updated to zetta ${result.to}.\n` : `zetta is already up to date.\n`)
+  } catch (error) {
+    write(`Could not update: ${(error as Error).message}\nTry again later with: zetta upgrade\n`)
+  }
 }

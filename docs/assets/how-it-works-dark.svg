@@ -23,7 +23,7 @@
     <path d="M 26 152 L 122 132 L 174 152 L 78 172 Z"/>
   </g>
     <text x="431" y="138" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-weight="700" font-size="22" fill="#FAF8F4">zetta</text>
-    <text x="391" y="184" font-family="'Geist', -apple-system, 'Segoe UI', Arial, sans-serif" font-size="14.5" fill="#C2BCAE">96 commands · JSON</text>
+    <text x="391" y="184" font-family="'Geist', -apple-system, 'Segoe UI', Arial, sans-serif" font-size="14.5" fill="#C2BCAE">100+ commands · JSON</text>
     <text x="391" y="212" font-family="'Geist', -apple-system, 'Segoe UI', Arial, sans-serif" font-size="14.5" fill="#C2BCAE">MCP server · skill</text>
     <text x="391" y="240" font-family="'Geist', -apple-system, 'Segoe UI', Arial, sans-serif" font-size="14.5" fill="#C2BCAE">spend guard</text>
   </g>

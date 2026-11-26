@@ -5,7 +5,7 @@
  *   dist/npm/<package>/      npm packages: `@zetta3d/cli` (a tiny launcher) plus one package per
  *                            platform carrying the binary, picked by npm through os/cpu/libc
  *
- *   bun run package:channels [--download-base https://downloads.zetta3d.ai/zcli]
+ *   bun run package:channels [--download-base <url>]   (default: the GitHub releases)
  *
  * Nothing is published. The release workflow (or the owner) publishes the npm packages with
  * `npm publish --access public` in each folder, platform packages first, and commits the formula
@@ -14,7 +14,7 @@
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
-import { downloadBase, parseManifest, type LatestManifest } from '../packages/cli/src/upgrade/manifest'
+import { downloadBase, parseManifest, versionUrl, type LatestManifest } from '../packages/cli/src/upgrade/manifest'
 
 const { values } = parseArgs({ options: { 'download-base': { type: 'string' }, dist: { type: 'string' } } })
 const ROOT = join(import.meta.dir, '..')
@@ -28,7 +28,7 @@ if (!existsSync(latestPath)) {
 }
 const manifest: LatestManifest = parseManifest(JSON.parse(readFileSync(latestPath, 'utf8')), latestPath)
 const version = manifest.version
-const url = (name: string) => `${BASE}/v${version}/${name}`
+const url = (name: string) => versionUrl(BASE, version, name)
 
 // ── Homebrew ────────────────────────────────────────────────────────────────
 

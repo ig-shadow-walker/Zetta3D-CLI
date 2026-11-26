@@ -1,7 +1,8 @@
 /**
  * End-to-end test of the real installers (install/install.sh, install/install.ps1) against a local
- * download host: builds this platform's binary, lays out latest.json + v<version>/ in a temp dir,
- * serves it with Bun.serve on 127.0.0.1, runs the installer exactly as users do
+ * stand-in for GitHub releases: builds this platform's binary, lays out latest.json + v<version>/ in a
+ * temp dir, serves it with Bun.serve on 127.0.0.1 the way GitHub does (releases/latest/download/…,
+ * releases/download/v<version>/…, each answered with a redirect to the file), runs the installer exactly as users do
  * (`curl -fsSL .../install.sh | sh`, `irm .../install.ps1 | iex`) into a temp install dir, and runs
  * the installed `zetta --version`. Also checks that bad checksums, corrupted downloads, unknown
  * versions and no network are refused without touching the installed binary, (macOS/Linux) that
@@ -151,9 +152,12 @@ if (!existsSync(binPath)) throw new Error(`${binPath} not found`)
 // ---- 2. local download host -------------------------------------------------------------------
 
 /**
- * /cli/...            the release as built
- * /bad-sums/cli/...   SHA256SUMS with every hash altered
- * /bad-bin/cli/...    binaries cut in half (a broken download)
+ * Laid out like GitHub releases, under /o/r/releases/:
+ *   latest/download/<file>              the newest release: latest.json and the installers
+ *   download/v<version>/<file>          one version's builds and SHA256SUMS
+ * Each is a 302 to /_files/…, as GitHub redirects every download to its file host. Prefixes:
+ *   /bad-sums/…   SHA256SUMS with every hash altered
+ *   /bad-bin/…    binaries cut in half (a broken download)
  */
 const requests: string[] = []
 const server = Bun.serve({
@@ -162,7 +166,12 @@ const server = Bun.serve({
   fetch(req) {
     const { pathname } = new URL(req.url)
     requests.push(pathname)
-    const m = /^\/(?:(bad-sums|bad-bin)\/)?cli\/(.+)$/.exec(pathname)
+    const release = /^\/((?:bad-sums|bad-bin)\/)?o\/r\/releases\/(?:latest\/download\/([^/]+)|download\/(v[^/]+)\/([^/]+))$/.exec(pathname)
+    if (release) {
+      const rel = release[2] ?? `${release[3]}/${release[4]}`
+      return new Response(null, { status: 302, headers: { location: `/_files/${release[1] ?? ''}${rel}` } })
+    }
+    const m = /^\/_files\/(?:(bad-sums|bad-bin)\/)?(.+)$/.exec(pathname)
     if (!m?.[2]) return new Response('not found', { status: 404 })
     const mode = m[1]
     const rel = decodeURIComponent(m[2])
@@ -184,7 +193,7 @@ const server = Bun.serve({
   },
 })
 const host = `http://127.0.0.1:${server.port}`
-const BASE = `${host}/cli`
+const BASE = `${host}/o/r/releases`
 
 // ---- 3. running the installer -----------------------------------------------------------------
 
@@ -235,10 +244,10 @@ function runInstaller(o: RunOpts): Promise<Run> {
   if (IS_WINDOWS) {
     const ps = o.powershell ?? 'pwsh'
     // The script always comes from the working host; ZETTA_DOWNLOAD_BASE (o.base) is what it downloads from.
-    const cmd = `irm '${BASE}/install.ps1' | iex`
+    const cmd = `irm '${BASE}/latest/download/install.ps1' | iex`
     return exec([ps, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', cmd], env)
   }
-  if (o.viaCurl) return exec(['sh', '-c', `curl -fsSL '${BASE}/install.sh' | sh`], env)
+  if (o.viaCurl) return exec(['sh', '-c', `curl -fsSL '${BASE}/latest/download/install.sh' | sh`], env)
   // Script on stdin, as with `curl ... | sh`: catches any command in it that would eat stdin.
   return exec(['sh', '-s'], env, SCRIPT)
 }
@@ -288,13 +297,13 @@ async function installerChecks(label: string, run: (o: RunOpts) => Promise<Run>,
   )
 
   const before = sha256(bin)
-  r = await run({ dir, base: `${host}/bad-sums/cli` })
+  r = await run({ dir, base: `${host}/bad-sums/o/r/releases` })
   check(
     `[${label}] wrong checksum is rejected and the installed binary is untouched`,
     r.status !== 0 && /checksum mismatch/i.test(output(r)) && sha256(bin) === before && strays(dir).length === 0,
     `exit ${r.status}\n${output(r)}`,
   )
-  r = await run({ dir, base: `${host}/bad-bin/cli` })
+  r = await run({ dir, base: `${host}/bad-bin/o/r/releases` })
   check(
     `[${label}] corrupted download is rejected`,
     r.status !== 0 && /checksum mismatch/i.test(output(r)) && sha256(bin) === before,
@@ -302,7 +311,7 @@ async function installerChecks(label: string, run: (o: RunOpts) => Promise<Run>,
   )
   r = await run({ dir, version: '9.9.9' })
   check(`[${label}] unknown version is reported`, r.status !== 0 && /9\.9\.9 was not found/.test(output(r)), output(r))
-  r = await run({ dir, base: 'http://127.0.0.1:9/cli' })
+  r = await run({ dir, base: 'http://127.0.0.1:9/o/r/releases' })
   check(
     `[${label}] no network is reported clearly`,
     r.status !== 0 && /internet connection/i.test(output(r)) && sha256(bin) === before,

@@ -51,20 +51,21 @@ Set these in front of the command, e.g. `curl -fsSL https://zetta3d.ai/install.s
 | `ZETTA_VERSION=0.2.0` | Install that version instead of the latest (prereleases like `0.3.0-beta.1` too) |
 | `ZETTA_INSTALL_DIR=/opt/zetta/bin` | Install into this folder |
 | `ZETTA_NO_MODIFY_PATH=1` | Don't touch shell rc files, the Windows `Path` or `$GITHUB_PATH` |
-| `ZETTA_DOWNLOAD_BASE=https://…` | Use another download host (mirrors, testing) |
+| `ZETTA_DOWNLOAD_BASE=https://…` | Download from somewhere other than the GitHub releases (mirrors, testing) |
 | `NO_COLOR=1` | No colour |
 
 On Windows, set them first: `$env:ZETTA_VERSION = '0.2.0'; irm https://zetta3d.ai/install.ps1 | iex`.
 
-## Other ways to install
+## Downloading a build yourself
 
-| Method | Command | Notes |
-|---|---|---|
-| npm | `npm install -g @zetta3d/cli` or `npx @zetta3d/cli …` | Needs Node 18+. npm installs only the binary for your platform |
-| Homebrew | `brew install zetta3d/tap/zetta` | macOS and Linux |
-| Manual | Download `zetta-<os>-<arch>` from the release, `chmod +x` it, put it on your `PATH` | Check it against `SHA256SUMS` |
+Every [GitHub release](https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest) has one file per platform: `zetta-darwin-arm64`, `zetta-darwin-x64`, `zetta-linux-x64`, `zetta-linux-arm64`, the `-musl` builds for Alpine, `zetta-windows-x64.exe`, and `-baseline` builds for x64 CPUs without AVX2. Download yours, `chmod +x` it, and put it on your `PATH`:
 
-npm and Homebrew are available once the first public release has been published.
+```bash
+curl -fLo zetta https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/zetta-linux-x64
+chmod +x zetta && mv zetta ~/.local/bin/
+```
+
+Check it against the release's `SHA256SUMS` (`shasum -a 256 -c SHA256SUMS --ignore-missing`). On macOS, a build downloaded with a browser is quarantined: clear that with `xattr -d com.apple.quarantine zetta`, or use the one-line installer, which avoids it.
 
 ## Updating
 
@@ -77,7 +78,7 @@ zetta upgrade --to 0.2.0   # a specific version (also to go back)
 `zetta upgrade` downloads and verifies the new binary the same way the installer does, test-runs it, then swaps it in place. Re-running the installer does the same. The agent skill updates itself the next time the new version runs.
 
 **Knowing when there's a new version:**
-- **At a terminal:** zetta checks for a new release at most once an hour (one small request) and says so: "zetta 0.2.0 is out (you have 0.1.0). Update with: zetta upgrade". The same version is mentioned at most twice a day. It never checks when output is piped, in CI, or with `ZETTA_NO_UPDATE_CHECK=1`.
+- **At a terminal:** zetta checks for a new release at most once an hour (one small request). When there is one, it asks after your command: "zetta 0.2.0 is out (you have 0.1.0). Update now? [Y/n]". Enter updates it on the spot; anything else leaves it, and it asks again at most twice a day. With `--non-interactive` or `ZETTA_NON_INTERACTIVE=1` it only says how to update. It never checks when output is piped, in CI, or with `ZETTA_NO_UPDATE_CHECK=1`.
 - **For agents:** the skill tells them to run `zetta upgrade --check` and tell you. The MCP server mentions a newer version in its instructions, and `zetta doctor` reports it.
 - **Homebrew and npm installs** are upgraded with `brew upgrade zetta` or `npm install -g @zetta3d/cli@latest`. The notice and `zetta upgrade` say so.
 

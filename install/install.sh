@@ -10,7 +10,7 @@
 # Environment overrides:
 #   ZETTA_VERSION=1.2.3      install this version instead of the latest
 #   ZETTA_INSTALL_DIR=DIR    install into DIR instead of ~/.zetta/bin
-#   ZETTA_DOWNLOAD_BASE=URL  download host (default https://downloads.zetta3d.ai/zcli)
+#   ZETTA_DOWNLOAD_BASE=URL  where releases live (default: the GitHub releases below)
 #   ZETTA_NO_MODIFY_PATH=1   do not touch shell startup files
 #   ZETTA_NO_SKILL=1         do not install the skill for AI coding agents (Claude Code, Codex, Cursor)
 #   ZETTA_NO_LOGIN=1         do not start the browser sign-in after installing
@@ -19,7 +19,7 @@
 
 set -u
 
-DEFAULT_BASE="https://downloads.zetta3d.ai/zcli"
+DEFAULT_BASE="https://github.com/ig-shadow-walker/Zetta3D-CLI/releases"
 
 # ---- output ---------------------------------------------------------------------------------
 
@@ -81,6 +81,21 @@ fetch() {
 	fi
 	z_fetch_msg=$(tail -n 1 "$z_work/fetch.err" 2>/dev/null || true)
 	return 1
+}
+
+# GitHub releases (a base ending in /releases) keep the newest release under latest/download/ and
+# each version under download/v<version>/; any other base is a plain folder: latest.json, v<version>/.
+latest_url() {
+	case "$z_base" in
+	*/releases) printf %s "$z_base/latest/download/$1" ;;
+	*) printf %s "$z_base/$1" ;;
+	esac
+}
+version_url() {
+	case "$z_base" in
+	*/releases) printf %s "$z_base/download/v$z_version/$1" ;;
+	*) printf %s "$z_base/v$z_version/$1" ;;
+	esac
 }
 
 # Appends " (reason)" when the last fetch left one.
@@ -313,21 +328,22 @@ main() {
 		z_version=${ZETTA_VERSION#v}
 	else
 		say "Finding the latest zetta release..."
-		fetch "$z_base/latest.json" "$z_work/latest.json" ||
-			err "could not download $z_base/latest.json$(why). Check your internet connection (and ZETTA_DOWNLOAD_BASE, if you set it)."
+		z_latest_url=$(latest_url latest.json)
+		fetch "$z_latest_url" "$z_work/latest.json" ||
+			err "could not download $z_latest_url$(why). Check your internet connection (and ZETTA_DOWNLOAD_BASE, if you set it)."
 		z_version=$(tr -d '\r\n' <"$z_work/latest.json" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-		[ -n "$z_version" ] || err "$z_base/latest.json does not name a version."
+		[ -n "$z_version" ] || err "$z_latest_url does not name a version."
 	fi
 	case "$z_version" in
 	"" | *[!0-9A-Za-z.+-]*) err "'$z_version' is not a valid zetta version." ;;
 	esac
 
 	# Checksums for that version; also tells us which builds exist.
-	if ! fetch "$z_base/v$z_version/SHA256SUMS" "$z_work/SHA256SUMS"; then
+	if ! fetch "$(version_url SHA256SUMS)" "$z_work/SHA256SUMS"; then
 		case "$z_fetch_msg" in
 		*404*) err "zetta $z_version was not found on $z_base." ;;
 		esac
-		err "could not download $z_base/v$z_version/SHA256SUMS$(why). Check your internet connection."
+		err "could not download $(version_url SHA256SUMS)$(why). Check your internet connection."
 	fi
 
 	# Pick the build: the AVX2-free one only when the CPU needs it.
@@ -349,8 +365,8 @@ main() {
 		z_gz_expected=$(awk -v n="$z_name.gz" '$2 == n || $2 == "*" n { print $1; exit }' "$z_work/SHA256SUMS" | tr 'A-F' 'a-f')
 	fi
 	if [ -n "$z_gz_expected" ]; then
-		fetch "$z_base/v$z_version/$z_name.gz" "$z_tmp.gz" progress ||
-			err "could not download $z_base/v$z_version/$z_name.gz$(why). Check your internet connection and try again."
+		fetch "$(version_url "$z_name.gz")" "$z_tmp.gz" progress ||
+			err "could not download $(version_url "$z_name.gz")$(why). Check your internet connection and try again."
 		z_actual=$(sha256_of "$z_tmp.gz" | tr 'A-F' 'a-f')
 		if [ "$z_actual" != "$z_gz_expected" ]; then
 			err "checksum mismatch for $z_name.gz (expected $z_gz_expected, got $z_actual).
@@ -359,8 +375,8 @@ The download is corrupted or was tampered with. Nothing was installed."
 		gzip -dc "$z_tmp.gz" >"$z_tmp" || err "could not unpack $z_name.gz."
 		rm -f "$z_tmp.gz"
 	else
-		fetch "$z_base/v$z_version/$z_name" "$z_tmp" progress ||
-			err "could not download $z_base/v$z_version/$z_name$(why). Check your internet connection and try again."
+		fetch "$(version_url "$z_name")" "$z_tmp" progress ||
+			err "could not download $(version_url "$z_name")$(why). Check your internet connection and try again."
 	fi
 
 	z_actual=$(sha256_of "$z_tmp" | tr 'A-F' 'a-f')

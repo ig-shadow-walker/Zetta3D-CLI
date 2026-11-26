@@ -111,7 +111,7 @@ These work with every command:
 | `ZETTA_NO_UPDATE_CHECK=1` | No new-version check or notice (normally at most once an hour, at a terminal) |
 | `ZETTA_NO_LOGIN=1` | The installers don't start the browser sign-in after installing |
 | `ZETTA_NO_SKILL=1` | Don't install or refresh the agent skill automatically (installers, upgrades) |
-| `ZETTA_DOWNLOAD_BASE` | Download host for `zetta upgrade` (and the installers) |
+| `ZETTA_DOWNLOAD_BASE` | Where `zetta upgrade` and the installers download releases from (default: the GitHub releases) |
 | `NO_COLOR` | No colours |
 | `CI=true` | Implies no prompts |
 

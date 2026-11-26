@@ -12,7 +12,8 @@ bun run zetta -- --profile local auth login     # against a local backend (see t
 |---|---|
 | `bun run check` | Typecheck, every test, lint: run before every change you hand over |
 | `bun run test` | Vitest: SDK, request rules, pipelines, every CLI command group |
-| `bun run build [target]` | A binary for this machine, or for the targets you name (`windows`, `macos`, `alpine`, `all`, …) → `release/<platform>/`. `--release` builds and checks a full release, `--upload` sends the builds to the storage bucket ([releasing.md](releasing.md)) |
+| `bun run build [target]` | A binary for this machine, or for the targets you name (`windows`, `macos`, `alpine`, `all`, …) → `release/<platform>/`. `--release` builds and checks a full release |
+| `bun run release` | Checks, builds every platform, tags and publishes a GitHub release ([releasing.md](releasing.md)) |
 | `bun run docs:commands` | Regenerates `docs/COMMANDS.md` and the agent skill from the command definitions and `docs/`: the copy the binary embeds (`src/skill/docs.generated.ts`) and the browsable `skill/zetta3d/`. A test fails until you run it |
 | `bun run scan:vendor` | The vendor-name scan (needs the word list; see below) |
 | `bun run smoke:live` | The live smoke test against the real API |
@@ -83,7 +84,7 @@ Rules the framework enforces, so commands don't have to:
 | `packages/cli/test/` | Every command group end to end, in-process, with a fake `fetch` (`harness.ts`) |
 | `packages/cli/test/mcp-client.test.ts` | `zetta mcp` through the official MCP client over real stdio |
 | `packages/cli/test/isolation.test.ts` | Upstream identifiers never reach output |
-| `scripts/test-install.ts` | The real installers end to end against a local download host |
+| `scripts/test-install.ts` | The real installers end to end against a local stand-in for GitHub releases |
 
 `harness.ts` points the home and settings folders at a temp folder for every run, so no test can touch your real ones. When a test needs a known home folder, pass `env: homeEnv(dir)`: Windows reads `USERPROFILE` and `APPDATA`, not `HOME`. In the CLI, use `homeDir(ctx.env)` from `core/paths.ts`, never `os.homedir()`.
 

@@ -26,4 +26,4 @@
 
 - [Development](development.md): layout, the command framework, tests, live smoke test, evals
 - [Releasing](releasing.md): one-time setup, cutting a release, rollback
-- [Hosting checklist](../install/README.md): the download host and installer URLs
+- [How releases are hosted](../install/README.md): the GitHub release files and the installer URLs

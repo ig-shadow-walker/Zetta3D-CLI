@@ -2,16 +2,22 @@
  * The release manifest format, shared by `scripts/build-binaries.ts`, the installers
  * (`install/install.sh`, `install/install.ps1`) and `zetta upgrade`.
  *
- * Layout under the download base (default https://downloads.zetta3d.ai/zcli):
+ * Releases are GitHub releases (default base https://github.com/<RELEASE_REPO>/releases):
  *
- *   latest.json                     -> LatestManifest for the newest stable release
- *   v<version>/zetta-<key>[.exe]    -> one binary per platform key
- *   v<version>/SHA256SUMS           -> "<sha256>  <file name>" per line
+ *   latest/download/latest.json              -> LatestManifest for the newest stable release
+ *   download/v<version>/zetta-<key>[.exe]    -> one binary per platform key (+ a .gz copy)
+ *   download/v<version>/SHA256SUMS           -> "<sha256>  <file name>" per line
  *
- * Versioned folders never change once published; only latest.json moves.
+ * Any other base is a plain folder (a mirror, or a local stand-in for tests):
+ * `<base>/latest.json` and `<base>/v<version>/<file>`.
+ *
+ * Published versions never change; only "latest" moves.
  *
  * This file must stay free of runtime dependencies so build scripts can import it.
  */
+
+/** The public GitHub repository whose releases hold every zetta build. */
+export const RELEASE_REPO = 'ig-shadow-walker/Zetta3D-CLI'
 
 export interface ManifestFile {
   /** File name inside `v<version>/`, e.g. `zetta-linux-x64-musl` or `zetta-windows-x64.exe`. */
@@ -36,17 +42,28 @@ export interface LatestManifest {
 declare const __ZETTA_DOWNLOAD_BASE__: string | undefined
 
 /**
- * Where releases are published. A release build bakes in the address it was uploaded to
+ * Where releases are published. A release build bakes in the address it was published to
  * (`--define __ZETTA_DOWNLOAD_BASE__=…`, see scripts/release.ts), so installed copies find new
- * versions there; anything else uses the public download host.
+ * versions there; anything else uses the GitHub releases of RELEASE_REPO.
  */
 export const DEFAULT_DOWNLOAD_BASE: string =
-  typeof __ZETTA_DOWNLOAD_BASE__ === 'string' && __ZETTA_DOWNLOAD_BASE__ ? __ZETTA_DOWNLOAD_BASE__ : 'https://downloads.zetta3d.ai/zcli'
+  typeof __ZETTA_DOWNLOAD_BASE__ === 'string' && __ZETTA_DOWNLOAD_BASE__ ? __ZETTA_DOWNLOAD_BASE__ : `https://github.com/${RELEASE_REPO}/releases`
 
 /** The download base without a trailing slash: the argument, else `ZETTA_DOWNLOAD_BASE`, else the default. */
 export function downloadBase(base?: string): string {
   const raw = (base ?? process.env.ZETTA_DOWNLOAD_BASE ?? '').trim()
   return (raw || DEFAULT_DOWNLOAD_BASE).replace(/\/+$/, '')
+}
+
+/** True for a GitHub releases address (one ending in `/releases`), which lays files out GitHub's way. */
+export function isGitHubReleases(base?: string): boolean {
+  return downloadBase(base).endsWith('/releases')
+}
+
+/** A file of the newest stable release: `<base>/latest/download/<file>` on GitHub, `<base>/<file>` elsewhere. */
+export function latestUrl(base: string | undefined, file: string): string {
+  const root = downloadBase(base)
+  return isGitHubReleases(root) ? `${root}/latest/download/${file}` : `${root}/${file}`
 }
 
 /** `linux-x64-musl` -> `zetta-linux-x64-musl`; Windows keys get `.exe`. */
@@ -63,8 +80,10 @@ export function keyFromBinaryName(name: string): string | undefined {
   return isWindows === (m[2] === '.exe') ? key : undefined
 }
 
-export function versionUrl(base: string, version: string, file: string): string {
-  return `${downloadBase(base)}/v${version}/${file}`
+/** A file of one version: `<base>/download/v<version>/<file>` on GitHub, `<base>/v<version>/<file>` elsewhere. */
+export function versionUrl(base: string | undefined, version: string, file: string): string {
+  const root = downloadBase(base)
+  return isGitHubReleases(root) ? `${root}/download/v${version}/${file}` : `${root}/v${version}/${file}`
 }
 
 const SEMVER =

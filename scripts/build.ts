@@ -7,13 +7,13 @@
  *   bun run build all                  # every release target
  *   bun run build --release            # a release: checks, every target + baseline, vendor scan, installer test
  *   bun run build --list               # every target name
- *   bun run build all --upload         # build, then publish to the storage bucket under zcli/ (scripts/upload-spaces.ts)
  *
  * Output: release/<platform>/zetta[.exe], one folder per platform (macos-arm64, linux-x64-musl,
  * windows-x64, …), plus release/SHA256SUMS. Building one platform leaves the other folders alone.
  *
- * The download-host layout the installers and `zetta upgrade` read (dist/v<version>/ with .gz
- * copies and SHA256SUMS, and dist/latest.json) is written by scripts/build-binaries.ts as before.
+ * The release files the installers and `zetta upgrade` read (dist/v<version>/ with .gz copies and
+ * SHA256SUMS, and dist/latest.json) are written by scripts/build-binaries.ts. Publishing them as a
+ * GitHub release is `bun run release` (scripts/release.ts).
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -23,7 +23,6 @@ import { parseArgs } from 'node:util'
 import { binaryName, keyFromBinaryName, normalizeVersion } from '../packages/cli/src/upgrade/manifest'
 import { platformKey } from '../packages/cli/src/upgrade/platform'
 import { BASELINE_TARGETS, TARGETS } from './build-binaries'
-import { releasePlan, spacesConfig, storageKey, uploadObjects, type SpacesConfig } from './upload-spaces'
 
 const ROOT = resolve(import.meta.dirname, '..')
 const RELEASE = join(ROOT, 'release')
@@ -55,13 +54,7 @@ Options:
   --outdir <dir>      output folder (default: dist)
   --skip-smoke        do not test-run this machine's binary after building
   --collect           only copy the binaries in dist/v<version>/ into release/ again (after signing them)
-  --upload            then publish the builds to the storage bucket, in SPACES_FOLDER (default zcli/):
-                      zcli/macosx/zetta-darwin-arm64, zcli/windows/zetta-windows-x64.exe, zcli/linux/…, and, once
-                      every platform is built, the files the installers and zetta upgrade read. The builds carry
-                      the bucket's address, so installed copies find new versions there (SPACES_* settings;
-                      docs/releasing.md)
-  --download-base <u> the address installed copies look for new versions at (default with --upload: the
-                      bucket folder's public address, or ZETTA_PUBLIC_BASE)
+  --download-base <u> where installed copies look for new versions (default: the GitHub releases)
   --list              list every target and where it goes
   -h, --help          show this help`
 
@@ -163,7 +156,6 @@ async function main(): Promise<void> {
         outdir: { type: 'string', default: 'dist' },
         'skip-smoke': { type: 'boolean', default: false },
         collect: { type: 'boolean', default: false },
-        upload: { type: 'boolean', default: false },
         'download-base': { type: 'string' },
         list: { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
@@ -176,10 +168,9 @@ async function main(): Promise<void> {
   const { values, positionals } = parsed
   if (values.help) return console.log(USAGE)
   if (values.list) {
-    console.log(`  ${'target'.padEnd(26)} ${'built into'.padEnd(40)} uploaded to (--upload)`)
+    console.log(`  ${'target'.padEnd(26)} built into`)
     for (const key of KEYS) {
-      const local = `release/${platformFolder(key)}/${shortName(key)}`
-      console.log(`  ${key.padEnd(26)} ${local.padEnd(40)} ${storageKey(key, process.env.SPACES_FOLDER?.trim() || undefined)}${key === platformKey() ? '   (this machine)' : ''}`)
+      console.log(`  ${key.padEnd(26)} release/${platformFolder(key)}/${shortName(key)}${key === platformKey() ? '   (this machine)' : ''}`)
     }
     return
   }
@@ -203,18 +194,8 @@ async function main(): Promise<void> {
   const bun = process.execPath
   const versionDir = resolve(ROOT, values.outdir, `v${version}`)
 
-  // Check the storage settings before the long build, not after it.
-  let storage: SpacesConfig | undefined
-  if (values.upload) {
-    try {
-      storage = spacesConfig()
-    } catch (error) {
-      console.error(`build: ${(error as Error).message}`)
-      process.exit(2)
-    }
-  }
   // Builds that are published carry the address they are published to, so installed copies find updates.
-  const downloadBase = values['download-base']?.replace(/\/+$/, '') ?? storage?.downloadBase
+  const downloadBase = values['download-base']?.replace(/\/+$/, '')
   if (downloadBase && !/^https?:\/\//.test(downloadBase)) {
     console.error(`build: --download-base must be an http(s) address, not "${downloadBase}".`)
     process.exit(2)
@@ -227,7 +208,6 @@ async function main(): Promise<void> {
     }
     const built = readdirSync(versionDir).map((name) => keyFromBinaryName(name)).filter((key): key is string => Boolean(key))
     report(collect(versionDir, built))
-    if (storage) await upload(storage, version, versionDir, built)
     return
   }
 
@@ -263,37 +243,7 @@ async function main(): Promise<void> {
   }
 
   report(collect(versionDir, keys))
-  if (storage) await upload(storage, version, versionDir, keys)
   if (keys.includes(platformKey())) console.log(`\nTry it: ${relative(ROOT, join(RELEASE, platformFolder(platformKey()), shortName(platformKey())))} --version`)
-}
-
-async function upload(storage: SpacesConfig, version: string, versionDir: string, keys: string[]): Promise<void> {
-  const plan = releasePlan({
-    version,
-    versionDir,
-    latestJson: join(versionDir, '..', 'latest.json'),
-    installDir: join(ROOT, 'install'),
-    folder: storage.folder,
-    downloadBase: storage.downloadBase,
-    keys,
-    releaseKeys: RELEASE_KEYS,
-  })
-  if (!plan.objects.length) {
-    console.error(`\nbuild: nothing to upload. ${plan.note ?? ''}`)
-    process.exit(1)
-  }
-  console.log(`\n▸ Publish ${plan.objects.length} files to the ${storage.bucket} bucket under ${storage.folder}/ (public, replacing what is there)`)
-  try {
-    await uploadObjects(plan.objects, storage, (line) => console.log(line))
-  } catch (error) {
-    console.error(`\nbuild: the upload failed: ${(error as Error).message}`)
-    console.error(`The builds are in release/ and ${relative(ROOT, versionDir)}; rerun with --collect --upload to try again.`)
-    process.exit(1)
-  }
-  console.log('\nPublished:')
-  for (const key of keys) if (plan.objects.some((o) => o.key === storageKey(key, storage.folder))) console.log(`  ${storage.publicBase}/${storageKey(key, storage.folder)}`)
-  if (plan.installers) console.log(`  ${storage.downloadBase}/latest.json now points at ${version}; installers and \`zetta upgrade\` install it.`)
-  if (plan.note) console.log(`\nNote: ${plan.note}`)
 }
 
 function report(files: string[]): void {

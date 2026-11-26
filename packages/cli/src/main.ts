@@ -35,7 +35,7 @@ process.on('SIGINT', () => {
 void (async () => {
   const args = process.argv.slice(2)
   const code = await runProgram(args, { commands: COMMANDS, groups: GROUPS, intro: INTRO, signal: controller.signal })
-  if (args[0] !== 'mcp' && args[0] !== 'upgrade') await maybeNotifyUpdate()
+  if (args[0] !== 'mcp' && args[0] !== 'upgrade') await maybeNotifyUpdate(process.env, args.includes('--non-interactive') ? { interactive: false } : {})
   // After an upgrade by any route, bring installed copies of the agent skill up to this version.
   if (isCompiledBinary() && args[0] !== 'skill') await refreshInstalledSkills()
   process.exitCode = code

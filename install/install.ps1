@@ -9,7 +9,7 @@
 # Environment overrides (set them first, e.g. $env:ZETTA_VERSION = '1.2.3'):
 #   ZETTA_VERSION          install this version instead of the latest
 #   ZETTA_INSTALL_DIR      install into this folder instead of %LOCALAPPDATA%\zetta\bin
-#   ZETTA_DOWNLOAD_BASE    download host (default https://downloads.zetta3d.ai/zcli)
+#   ZETTA_DOWNLOAD_BASE    where releases live (default: the GitHub releases below)
 #   ZETTA_NO_MODIFY_PATH=1 do not change the user PATH
 #   ZETTA_NO_SKILL=1       do not install the skill for AI coding agents (Claude Code, Codex, Cursor)
 #   ZETTA_NO_LOGIN=1       do not start the browser sign-in after installing
@@ -18,7 +18,7 @@
 # does nothing, and no variables or preferences leak into your session.
 
 & {
-    $DefaultBase = 'https://downloads.zetta3d.ai/zcli'
+    $DefaultBase = 'https://github.com/ig-shadow-walker/Zetta3D-CLI/releases'
 
     # Scoped to this block: hide the slow progress bar of Invoke-WebRequest in Windows PowerShell.
     $ProgressPreference = 'SilentlyContinue'
@@ -134,6 +134,11 @@
 
         $base = if ($env:ZETTA_DOWNLOAD_BASE) { $env:ZETTA_DOWNLOAD_BASE.Trim() } else { $DefaultBase }
         $base = $base.TrimEnd('/')
+        # GitHub releases (a base ending in /releases) keep the newest release under latest/download/
+        # and each version under download/v<version>/; any other base is a plain folder.
+        $github = $base -match '/releases$'
+        function Get-LatestUrl([string]$File) { if ($github) { "$base/latest/download/$File" } else { "$base/$File" } }
+        function Get-VersionUrl([string]$Version, [string]$File) { if ($github) { "$base/download/v$Version/$File" } else { "$base/v$Version/$File" } }
 
         if ($env:ZETTA_INSTALL_DIR) {
             $dir = $env:ZETTA_INSTALL_DIR
@@ -158,18 +163,19 @@
             } else {
                 Write-Step 'Finding the latest zetta release...'
                 $latestFile = Join-Path $work 'latest.json'
-                if ((Get-Download "$base/latest.json" $latestFile) -eq 404) { Fail "$base/latest.json was not found." }
+                $latestUrl = Get-LatestUrl 'latest.json'
+                if ((Get-Download $latestUrl $latestFile) -eq 404) { Fail "$latestUrl was not found." }
                 try {
                     $version = [string](Get-Content -LiteralPath $latestFile -Raw | ConvertFrom-Json).version
                 } catch {
-                    Fail "$base/latest.json is not valid JSON."
+                    Fail "$latestUrl is not valid JSON."
                 }
-                if (-not $version) { Fail "$base/latest.json does not name a version." }
+                if (-not $version) { Fail "$latestUrl does not name a version." }
             }
             if ($version -notmatch '^[0-9A-Za-z.+-]+$') { Fail "'$version' is not a valid zetta version." }
 
             $sumsFile = Join-Path $work 'SHA256SUMS'
-            if ((Get-Download "$base/v$version/SHA256SUMS" $sumsFile) -eq 404) { Fail "zetta $version was not found on $base." }
+            if ((Get-Download (Get-VersionUrl $version 'SHA256SUMS') $sumsFile) -eq 404) { Fail "zetta $version was not found on $base." }
             $sums = @{}
             foreach ($line in Get-Content -LiteralPath $sumsFile) {
                 if ($line -match '^([0-9a-fA-F]{64})\s+\*?(\S+)\s*$') { $sums[$Matches[2]] = $Matches[1].ToLowerInvariant() }
@@ -191,7 +197,8 @@
             if ($sums.ContainsKey($gzName)) {
                 # The gzip copy is about half the size.
                 $gzTmp = "$tmp.gz"
-                if ((Get-Download "$base/v$version/$gzName" $gzTmp) -eq 404) { Fail "$base/v$version/$gzName was not found." }
+                $gzUrl = Get-VersionUrl $version $gzName
+                if ((Get-Download $gzUrl $gzTmp) -eq 404) { Fail "$gzUrl was not found." }
                 $gzActual = Get-Sha256 $gzTmp
                 if ($gzActual -ne $sums[$gzName]) {
                     Fail "checksum mismatch for $gzName (expected $($sums[$gzName]), got $gzActual). The download is corrupted or was tampered with. Nothing was installed."
@@ -203,7 +210,7 @@
                     try { $gz.CopyTo($out) } finally { $out.Dispose(); $gz.Dispose() }
                 } finally { $in.Dispose() }
                 Remove-Item -LiteralPath $gzTmp -Force -ErrorAction SilentlyContinue
-            } elseif ((Get-Download "$base/v$version/$name" $tmp) -eq 404) { Fail "$base/v$version/$name was not found." }
+            } elseif ((Get-Download (Get-VersionUrl $version $name) $tmp) -eq 404) { Fail "$(Get-VersionUrl $version $name) was not found." }
 
             $actual = Get-Sha256 $tmp
             if ($actual -ne $sums[$name]) {
