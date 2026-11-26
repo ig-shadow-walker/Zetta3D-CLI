@@ -12,7 +12,6 @@
 import {
   DEFAULT_GEN_MODEL,
   OPERATIONS,
-  SHARED_FACE_LIMITS,
   VIEW_TYPES,
   buildMetadata,
   checkEnum,
@@ -21,6 +20,7 @@ import {
   formatCount,
   isWholeNumber,
   problem,
+  retiredModelMessage,
   MAX_PROMPT_LENGTH,
   type BuildResult,
   type CreateGenerationRequest,
@@ -33,91 +33,65 @@ import {
 
 export type { CreateGenerationRequest } from './common'
 
-export const GENERATE_ENGINE_IDS = ['n1', 'n25', 'np1', 'np15'] as const
+export const GENERATE_ENGINE_IDS = ['n25', 'np1', 'np15'] as const
 export type GenerateEngineId = (typeof GENERATE_ENGINE_IDS)[number]
 
-/** The Studio's Low-Poly / High-Res / Ultra rungs. */
+/** The Studio's Low-Poly / High-Res / Ultra rungs (Zetta N2.5 only). */
 export const QUALITIES = ['lowpoly', 'high', 'ultra'] as const
 export type Quality = (typeof QUALITIES)[number]
 export const OUTPUTS = ['textured', 'geometry'] as const
 export type Output = (typeof OUTPUTS)[number]
 export const POLYGON_TYPES = ['triangle', 'quad'] as const
 export type PolygonType = (typeof POLYGON_TYPES)[number]
-/** standard is free; detailed (HD) and 8k are paid modifiers. */
-export const TEXTURE_QUALITIES = ['standard', 'detailed', '8k'] as const
+/** standard is free; detailed (HD) and extreme (8K, the Np line only) are paid modifiers. */
+export const TEXTURE_QUALITIES = ['standard', 'detailed', 'extreme'] as const
 export type TextureQuality = (typeof TEXTURE_QUALITIES)[number]
+/** Earlier spellings that are still read: `8k` is `extreme`. */
+export const TEXTURE_QUALITY_ALIASES: Readonly<Record<string, TextureQuality>> = { '8k': 'extreme' }
 export const TEXTURE_ALIGNMENTS = ['original_image', 'geometry'] as const
 export type TextureAlignment = (typeof TEXTURE_ALIGNMENTS)[number]
 
-/** A multi-view slot. The Studio offers front, back, left and right. */
+/** A multi-view slot. Every engine takes front, back, left and right. */
 export type ViewSlot = ViewType
+
+/** Which Studio tab offers an engine: Generate 3D (N2.5) or Generate Smart 3D (the Np line). */
+export type StudioTab = 'generate' | 'smart'
 
 /** What each generation engine can be asked for. Mirrors the server's capability table. */
 interface Capabilities {
   label: string
   description: string
+  tab: StudioTab
   paidOnly: boolean
-  barePrompt: boolean
-  multiView: boolean
   viewSlots: readonly ViewSlot[]
-  /** The server refuses a set below this, or without a front view, after the charge. */
+  /** The server refuses a set below this, or without a front view. */
   minViews: number
   frontViewRequired: boolean
   /** Whether the quality rungs mean anything (the Np line builds to a face budget only). */
   qualityRungs: boolean
   lowPoly: boolean
   geometryOnly: boolean
-  /** An untextured low-poly mesh; elsewhere low-poly and untextured are one engine switch. */
+  /** An untextured low-poly mesh (`generationType: Geometry`). */
   bareLowPoly: boolean
-  sketch: boolean
   pbr: boolean
   customFaceCount: boolean
-  /** Ultra is a paid `detailed_geometry` level rather than a bigger count. */
+  /** Ultra is a paid `detailed_geometry` level. */
   detailLevel: boolean
   hdTexture: boolean
   extremeTexture: boolean
-  /** The free tuning options (auto size, texture alignment, autofix, compression, seeds, delight, UVs). */
-  imageTuning: boolean
   parts: boolean
-  /** Quads at any quality, rather than at low-poly only. */
+  /** Quads at any quality. */
   quadAnyBase: boolean
-  /** Where a rung IS a count (N1): the count each rung fills in. Elsewhere the rung's ceiling is used. */
-  rungCounts?: { lowpoly: number; high: number; ultra: number }
 }
 
 const FOUR_VIEWS: readonly ViewSlot[] = ['front', 'back', 'left', 'right']
 
 const CAPS: Record<GenerateEngineId, Capabilities> = {
-  n1: {
-    label: 'Zetta N1',
-    description: 'Base model. Takes a prompt, a picture or several views, on every plan.',
-    paidOnly: false,
-    barePrompt: true,
-    multiView: true,
-    viewSlots: VIEW_TYPES,
-    minViews: 1,
-    frontViewRequired: false,
-    qualityRungs: true,
-    lowPoly: true,
-    geometryOnly: true,
-    bareLowPoly: false,
-    sketch: true,
-    pbr: true,
-    customFaceCount: true,
-    detailLevel: false,
-    hdTexture: false,
-    extremeTexture: false,
-    imageTuning: false,
-    parts: false,
-    quadAnyBase: false,
-    rungCounts: { lowpoly: 9_000, high: 200_000, ultra: 1_000_000 },
-  },
   n25: {
     label: 'Zetta N2.5',
     description: 'Highest quality of mesh and texture.',
+    tab: 'generate',
     paidOnly: true,
-    barePrompt: false,
-    multiView: true,
     viewSlots: FOUR_VIEWS,
     minViews: 2,
     frontViewRequired: true,
@@ -125,22 +99,19 @@ const CAPS: Record<GenerateEngineId, Capabilities> = {
     lowPoly: true,
     geometryOnly: true,
     bareLowPoly: true,
-    sketch: false,
     pbr: true,
     customFaceCount: true,
     detailLevel: true,
     hdTexture: true,
     extremeTexture: false,
-    imageTuning: true,
     parts: true,
     quadAnyBase: true,
   },
   np1: {
     label: 'Zetta Np1',
-    description: 'Clean low-poly topology, balanced quality.',
+    description: 'Clean topology, balanced quality. Triangles only.',
+    tab: 'smart',
     paidOnly: true,
-    barePrompt: false,
-    multiView: true,
     viewSlots: FOUR_VIEWS,
     minViews: 2,
     frontViewRequired: true,
@@ -148,22 +119,19 @@ const CAPS: Record<GenerateEngineId, Capabilities> = {
     lowPoly: false,
     geometryOnly: true,
     bareLowPoly: false,
-    sketch: false,
     pbr: true,
     customFaceCount: true,
     detailLevel: false,
     hdTexture: true,
     extremeTexture: true,
-    imageTuning: true,
     parts: false,
     quadAnyBase: false,
   },
   np15: {
     label: 'Zetta Np1.5',
     description: 'Clean topology, quad native.',
+    tab: 'smart',
     paidOnly: true,
-    barePrompt: false,
-    multiView: true,
     viewSlots: FOUR_VIEWS,
     minViews: 2,
     frontViewRequired: true,
@@ -171,13 +139,11 @@ const CAPS: Record<GenerateEngineId, Capabilities> = {
     lowPoly: false,
     geometryOnly: true,
     bareLowPoly: false,
-    sketch: false,
     pbr: true,
     customFaceCount: true,
     detailLevel: false,
     hdTexture: true,
     extremeTexture: true,
-    imageTuning: true,
     parts: false,
     quadAnyBase: true,
   },
@@ -197,10 +163,12 @@ export interface EngineInfo {
   id: GenerateEngineId
   label: string
   description: string
-  /** Needs a paid plan (see `checkEntitlements`). */
+  /** The Studio tab that offers it: Generate 3D or Generate Smart 3D. */
+  tab: StudioTab
+  /** Needs a paid plan (see `checkEntitlements`). Every generation does now. */
   paidOnly: boolean
   inputs: {
-    /** A bare text prompt. When false, make a picture from the prompt first (`needsImageForPrompt`). */
+    /** A text prompt: it always becomes a picture first (`needsImageForPrompt`). */
     prompt: boolean
     image: boolean
     multiView: boolean
@@ -216,22 +184,19 @@ export interface EngineInfo {
   pbr: boolean
   textureQualities: readonly TextureQuality[]
   polygonTypes: readonly PolygonType[]
-  /** Quads only at quality lowpoly. */
-  quadsOnlyAtLowpoly: boolean
   parts: boolean
-  sketch: boolean
-  /** Takes the free tuning options. */
+  /** Takes the free tuning options (auto size, alignment, delight, autofix, compression, UVs, seeds). */
   tuning: boolean
   customFaceCount: boolean
   faceCounts: readonly FaceCountBand[]
   defaults: {
-    quality: Quality
+    /** `null` on an engine without quality levels. */
+    quality: Quality | null
     output: Output
     pbr: boolean
     textureQuality: TextureQuality
     polygonType: PolygonType
-    /** `null` where the engine has no alignment option. */
-    textureAlignment: TextureAlignment | null
+    textureAlignment: TextureAlignment
     exportUv: boolean
   }
 }
@@ -266,28 +231,28 @@ export function faceCountRange(
 }
 
 /**
- * The count the Studio fills in for a rung — and so the count that is not "custom" and carries no
- * `custom_face_count` charge.
+ * The count the Studio fills in for a rung — the most it allows — and so the count that is not
+ * "custom" and carries no `custom_face_count` charge.
  */
 export function defaultFaceCount(
   engine: GenerateEngineId,
   quality: Quality = 'high',
   polygonType: PolygonType = 'triangle',
 ): number {
-  // On N1 a rung is a fixed count; elsewhere the field opens on the most the rung allows.
-  const counts = CAPS[engine].rungCounts
-  return counts ? counts[quality] : faceCountRange(engine, quality, polygonType).max
+  return faceCountRange(engine, quality, polygonType).max
+}
+
+function polygonTypesOf(caps: Capabilities): PolygonType[] {
+  return caps.quadAnyBase ? ['triangle', 'quad'] : ['triangle']
 }
 
 function bandsFor(engine: GenerateEngineId): FaceCountBand[] {
   const caps = CAPS[engine]
-  const polygonTypes: PolygonType[] = caps.quadAnyBase || caps.lowPoly ? ['triangle', 'quad'] : ['triangle']
   const qualities: Array<Quality | null> = caps.qualityRungs ? [...QUALITIES] : [null]
   const bands: FaceCountBand[] = []
   for (const quality of qualities) {
-    for (const polygonType of polygonTypes) {
+    for (const polygonType of polygonTypesOf(caps)) {
       const rung = quality ?? 'high'
-      if (polygonType === 'quad' && !caps.quadAnyBase && rung !== 'lowpoly') continue
       const range = faceCountRange(engine, rung, polygonType)
       bands.push({ quality, polygonType, ...range, default: defaultFaceCount(engine, rung, polygonType) })
     }
@@ -301,11 +266,12 @@ function engineInfo(id: GenerateEngineId): EngineInfo {
     id,
     label: caps.label,
     description: caps.description,
+    tab: caps.tab,
     paidOnly: caps.paidOnly,
     inputs: {
-      prompt: caps.barePrompt,
+      prompt: true,
       image: true,
-      multiView: caps.multiView,
+      multiView: caps.viewSlots.length > 0,
       viewSlots: caps.viewSlots,
       minViews: caps.minViews,
       frontViewRequired: caps.frontViewRequired,
@@ -315,23 +281,21 @@ function engineInfo(id: GenerateEngineId): EngineInfo {
     untexturedLowpoly: caps.bareLowPoly,
     pbr: caps.pbr,
     textureQualities: TEXTURE_QUALITIES.filter(
-      (t) => t === 'standard' || (t === 'detailed' && caps.hdTexture) || (t === '8k' && caps.extremeTexture),
+      (t) => t === 'standard' || (t === 'detailed' && caps.hdTexture) || (t === 'extreme' && caps.extremeTexture),
     ),
-    polygonTypes: caps.quadAnyBase || caps.lowPoly ? ['triangle', 'quad'] : ['triangle'],
-    quadsOnlyAtLowpoly: !caps.quadAnyBase && caps.lowPoly,
+    polygonTypes: polygonTypesOf(caps),
     parts: caps.parts,
-    sketch: caps.sketch,
-    tuning: caps.imageTuning,
+    tuning: true,
     customFaceCount: caps.customFaceCount,
     faceCounts: bandsFor(id),
     defaults: {
-      quality: 'high',
+      quality: caps.qualityRungs ? 'high' : null,
       output: 'textured',
       pbr: true,
       textureQuality: 'standard',
       polygonType: 'triangle',
-      // The Studio fits the texture to the mesh by default.
-      textureAlignment: caps.imageTuning ? 'geometry' : null,
+      // The Studio fits the texture to the mesh by default, on both tabs.
+      textureAlignment: 'geometry',
       exportUv: true,
     },
   }
@@ -339,7 +303,6 @@ function engineInfo(id: GenerateEngineId): EngineInfo {
 
 /** The generation engines, in the order the Studio offers them. */
 export const ENGINES: Readonly<Record<GenerateEngineId, EngineInfo>> = {
-  n1: engineInfo('n1'),
   n25: engineInfo('n25'),
   np1: engineInfo('np1'),
   np15: engineInfo('np15'),
@@ -350,39 +313,40 @@ export function isGenerateEngine(value: unknown): value is GenerateEngineId {
 }
 
 /**
- * True for engines that cannot take a bare text prompt. For those, make a picture first
- * (`imageForPromptRequest` in `prompts.ts`) and send it as `imageUrl` with `imageFromPrompt: true`.
+ * True for every engine: no engine takes a bare text prompt, so the Studio makes a picture first
+ * (`imageForPromptRequest` in `prompts.ts`) and sends it as `imageUrl` with `imageFromPrompt: true`.
+ * (A bare prompt is still accepted: the server then draws the picture itself, unseen.)
  */
-export function needsImageForPrompt(engine: string): boolean {
-  return !(isGenerateEngine(engine) && CAPS[engine].barePrompt)
+export function needsImageForPrompt(_engine: string): boolean {
+  return true
 }
 
 /** CLI-friendly options for one generation. Anything left out takes the Studio's default. */
 export interface GenerateInput extends RequestMetadata {
-  /** Defaults to `n1`, the engine every plan has. */
+  /** Defaults to `n25`. */
   engine?: GenerateEngineId
-  /** Text-to-3D on N1; on the other engines only beside the picture made from it. */
+  /** Text to 3D: sent beside the picture made from it (`imageFromPrompt`), or alone. */
   prompt?: string
   imageUrl?: string
   /** The image was made from `prompt` by our own image model: both are sent, the row is text-to-3D. */
   imageFromPrompt?: boolean
   /** Multi-view: slot → image URL. Excludes `prompt` and `imageUrl`; put the main picture in `front`. */
   views?: Partial<Record<ViewSlot, string>>
-  /** lowpoly | high | ultra. Defaults to high. Engines without levels take high only. */
+  /** lowpoly | high | ultra (N2.5). Defaults to high. The Np line takes high only. */
   quality?: Quality
   /** textured | geometry. Defaults to textured (geometry when `parts` is on). */
   output?: Output
   /** PBR materials (a paid modifier). Defaults on for a textured output. */
   pbr?: boolean
-  /** The polygon budget. Defaults to the rung's own count, which carries no custom-count charge. */
+  /** The polygon budget. Defaults to the most the rung allows, which carries no custom-count charge. */
   faceCount?: number
   /** triangle | quad. Defaults to triangle. */
   polygonType?: PolygonType
-  /** standard | detailed | 8k. Defaults to standard. */
-  textureQuality?: TextureQuality
-  /** Split the mesh into editable parts (N2.5, untextured, triangles). */
+  /** standard | detailed | extreme (`8k` is read as extreme). Defaults to standard. */
+  textureQuality?: TextureQuality | '8k'
+  /** Split the mesh into editable parts (N2.5, untextured, triangles, not low-poly). */
   parts?: boolean
-  /** Fit the texture to the picture or to the mesh. Defaults to geometry where the engine has it. */
+  /** Fit the texture to the picture or to the mesh. Defaults to geometry, as the Studio does. */
   textureAlignment?: TextureAlignment
   /** Scale to real-world size. */
   autoSize?: boolean
@@ -398,9 +362,7 @@ export interface GenerateInput extends RequestMetadata {
   textureFast?: boolean
   modelSeed?: number
   textureSeed?: number
-  /** Build from a line drawing (N1, textured, high or ultra). */
-  sketch?: boolean
-  /** Records that advanced controls were used. */
+  /** Records that the picture was reviewed before it became a mesh (the Studio's Control Mode). */
   advanceControl?: boolean
   /**
    * The plan's `allowsCustomFaceCount`. When false, no count is sent (the engine uses its own),
@@ -409,27 +371,11 @@ export interface GenerateInput extends RequestMetadata {
   allowsCustomFaceCount?: boolean
 }
 
-/** The order views are listed in on the wire. Cosmetic since nothing folds, but kept stable. */
-const VIEW_SUBMIT_ORDER: readonly ViewSlot[] = [
-  'left',
-  'right',
-  'back',
-  'top',
-  'bottom',
-  'left_front',
-  'right_front',
-  'front',
-]
+/** The order views are listed in on the wire, as the Studio sends them: front last. */
+const VIEW_SUBMIT_ORDER: readonly ViewSlot[] = ['left', 'right', 'back', 'front']
 
-/** N1 runs low-poly and sketch jobs on an older engine that has only these side slots. */
-const N1_LEGACY_SLOTS: readonly ViewSlot[] = ['left', 'right', 'back']
-
-/** Above 15,000 a count is High-Res; from 1,000,000 it is Ultra (inclusive, so Ultra's own default is Ultra). */
-function qualityForCount(count: number): Quality | null {
-  if (!Number.isInteger(count) || count < SHARED_FACE_LIMITS.min || count > SHARED_FACE_LIMITS.max) return null
-  if (count >= 1_000_000) return 'ultra'
-  if (count > 15_000) return 'high'
-  return 'lowpoly'
+function normaliseTextureQuality(value: unknown): unknown {
+  return typeof value === 'string' ? (TEXTURE_QUALITY_ALIASES[value.toLowerCase()] ?? value) : value
 }
 
 export function buildGenerateRequest(input: GenerateInput): BuildResult<CreateGenerationRequest> {
@@ -439,9 +385,11 @@ export function buildGenerateRequest(input: GenerateInput): BuildResult<CreateGe
   const engine = input.engine ?? DEFAULT_GEN_MODEL
   if (!isGenerateEngine(engine)) {
     const id = String(engine)
+    const retired = retiredModelMessage(id)
+    if (retired) return { ok: false, problems: [problem('ENGINE_RETIRED', retired, 'engine')] }
     const message =
       id === 'r1'
-        ? 'Zetta R1 only rebuilds topology. Use it with refine retopo, and generate with n1, n25, np1 or np15.'
+        ? 'Zetta R1 only rebuilds topology. Use it with refine retopo, and generate with n25, np1 or np15.'
         : id === 'zs2' || id === 'zs21'
           ? 'Zetta Splat 2 and 2.1 build splat worlds. Use the splat builder for them.'
           : `engine must be one of: ${GENERATE_ENGINE_IDS.join(', ')}.`
@@ -467,27 +415,18 @@ export function buildGenerateRequest(input: GenerateInput): BuildResult<CreateGe
 
   // ---------------------------------------------------------------------------- the rung
   let quality: Quality = 'high'
-  if (input.quality !== undefined) {
-    if (checkEnum(problems, 'quality', input.quality, QUALITIES)) {
-      if (!caps.qualityRungs && input.quality !== 'high') {
-        const range = faceCountRange(engine)
-        problems.push(
-          problem(
-            'QUALITY_NOT_SUPPORTED',
-            `${label} has no quality levels. Set faceCount (${formatCount(range.min)}–${formatCount(range.max)}) instead.`,
-            'quality',
-          ),
-        )
-      } else {
-        quality = input.quality
-      }
-    }
-  } else if (engine === 'n1' && input.faceCount !== undefined && input.allowsCustomFaceCount !== false) {
-    // Typing a count moves the rung on N1, where a rung is a count.
-    const implied = qualityForCount(input.faceCount)
-    if (implied !== null && implied !== 'high') {
-      quality = implied
-      warnings.push(`A polygon count of ${formatCount(input.faceCount)} means quality ${implied} on ${label}.`)
+  if (input.quality !== undefined && checkEnum(problems, 'quality', input.quality, QUALITIES)) {
+    if (!caps.qualityRungs && input.quality !== 'high') {
+      const range = faceCountRange(engine)
+      problems.push(
+        problem(
+          'QUALITY_NOT_SUPPORTED',
+          `${label} has no quality levels. Set faceCount (${formatCount(range.min)}–${formatCount(range.max)}) instead.`,
+          'quality',
+        ),
+      )
+    } else {
+      quality = input.quality
     }
   }
 
@@ -508,8 +447,9 @@ export function buildGenerateRequest(input: GenerateInput): BuildResult<CreateGe
   }
 
   let textureQuality: TextureQuality = 'standard'
-  if (input.textureQuality !== undefined && checkEnum(problems, 'textureQuality', input.textureQuality, TEXTURE_QUALITIES)) {
-    textureQuality = input.textureQuality
+  const askedTexture = normaliseTextureQuality(input.textureQuality)
+  if (askedTexture !== undefined && checkEnum(problems, 'textureQuality', askedTexture, TEXTURE_QUALITIES)) {
+    textureQuality = askedTexture
   }
 
   const base =
@@ -518,16 +458,6 @@ export function buildGenerateRequest(input: GenerateInput): BuildResult<CreateGe
       : output === 'geometry'
         ? OPERATIONS.GEOMETRY_ONLY
         : OPERATIONS.TEXTURED
-
-  if (base === OPERATIONS.LOWPOLY && output === 'geometry' && !caps.bareLowPoly) {
-    problems.push(
-      problem(
-        'LOWPOLY_IS_TEXTURED',
-        `${label} always textures a low-poly mesh. Choose output textured, or quality high.`,
-        'output',
-      ),
-    )
-  }
 
   // ---------------------------------------------------------------------------- parts
   if (parts) {
@@ -559,14 +489,10 @@ export function buildGenerateRequest(input: GenerateInput): BuildResult<CreateGe
   }
 
   // ---------------------------------------------------------------------------- topology
-  if (polygonType === 'quad') {
-    if (!caps.quadAnyBase && !caps.lowPoly) {
-      problems.push(problem('QUADS_NOT_SUPPORTED', `${label} builds triangles only. Use Zetta Np1.5 for quads.`, 'polygonType'))
-    } else if (!caps.quadAnyBase && base !== OPERATIONS.LOWPOLY) {
-      problems.push(
-        problem('QUADS_NEED_LOWPOLY', `${label} builds quads only at quality lowpoly. Choose lowpoly, or use Zetta N2.5 for quads at any quality.`, 'polygonType'),
-      )
-    }
+  if (polygonType === 'quad' && !caps.quadAnyBase) {
+    problems.push(
+      problem('QUADS_NOT_SUPPORTED', `${label} builds triangles only. Use Zetta Np1.5 or N2.5 for quads.`, 'polygonType'),
+    )
   }
 
   // ---------------------------------------------------------------------------- texture options
@@ -584,11 +510,15 @@ export function buildGenerateRequest(input: GenerateInput): BuildResult<CreateGe
       )
     } else if (textureQuality === 'detailed' && !caps.hdTexture) {
       problems.push(
-        problem('TEXTURE_QUALITY_NOT_SUPPORTED', `${label} has no detailed texture option. Use Zetta N2.5, Np1 or Np1.5.`, 'textureQuality'),
+        problem('TEXTURE_QUALITY_NOT_SUPPORTED', `${label} has no detailed texture option.`, 'textureQuality'),
       )
-    } else if (textureQuality === '8k' && !caps.extremeTexture) {
+    } else if (textureQuality === 'extreme' && !caps.extremeTexture) {
       problems.push(
-        problem('TEXTURE_QUALITY_NOT_SUPPORTED', `${label} has no 8K texture option. Use Zetta Np1 or Np1.5.`, 'textureQuality'),
+        problem(
+          'TEXTURE_QUALITY_NOT_SUPPORTED',
+          `${label} has no extreme (8K) texture option. Use Zetta Np1 or Np1.5, or textureQuality detailed.`,
+          'textureQuality',
+        ),
       )
     }
   }
@@ -601,8 +531,8 @@ export function buildGenerateRequest(input: GenerateInput): BuildResult<CreateGe
   const partsBilled = parts && caps.parts && output === 'geometry' && quality !== 'lowpoly'
   if (partsBilled) modifiers.push(OPERATIONS.GENERATE_PARTS)
   if (output === 'textured') {
-    // One texture field: 8K and HD are alternatives, never both.
-    if (textureQuality === '8k' && caps.extremeTexture) modifiers.push(OPERATIONS.EXTREME_TEXTURE)
+    // One texture field: extreme and detailed are alternatives, never both.
+    if (textureQuality === 'extreme' && caps.extremeTexture) modifiers.push(OPERATIONS.EXTREME_TEXTURE)
     else if (textureQuality === 'detailed' && caps.hdTexture) modifiers.push(OPERATIONS.DETAILED_TEXTURE)
   }
 
@@ -657,7 +587,6 @@ export function buildGenerateRequest(input: GenerateInput): BuildResult<CreateGe
       warnings.push('imageFromPrompt was ignored: it describes a single picture made from a prompt.')
     }
 
-    const legacy = engine === 'n1' && (base === OPERATIONS.LOWPOLY || input.sketch === true)
     const byType = new Map<ViewSlot, string>()
     for (const [slot, raw] of viewEntries) {
       if (!(VIEW_TYPES as readonly string[]).includes(slot)) {
@@ -682,19 +611,6 @@ export function buildGenerateRequest(input: GenerateInput): BuildResult<CreateGe
         problem('TOO_FEW_VIEWS', `${label} needs at least ${caps.minViews} views. Use imageUrl for a single picture.`, 'views'),
       )
     }
-    if (legacy) {
-      // The older engine has no top, bottom or three-quarter slots.
-      const dropped = [...byType.keys()].filter((slot) => slot === 'top' || slot === 'bottom')
-      const folded = [...byType.keys()].filter((slot) => slot === 'left_front' || slot === 'right_front')
-      if (dropped.length > 0) warnings.push(`${label} ignores the ${dropped.join(' and ')} views on a low-poly or sketch job.`)
-      if (folded.length > 0) warnings.push(`${label} uses the ${folded.join(' and ')} views as plain side views on a low-poly or sketch job.`)
-      const usable = [...byType.keys()].filter(
-        (slot) => slot === 'front' || N1_LEGACY_SLOTS.includes(slot) || slot === 'left_front' || slot === 'right_front',
-      )
-      if (byType.size > 0 && usable.length === 0) {
-        problems.push(problem('NO_USABLE_VIEWS', 'None of these views can be used on a low-poly or sketch job. Add a front, back, left or right view.', 'views'))
-      }
-    }
 
     request.multiViewImages = VIEW_SUBMIT_ORDER.filter((slot) => byType.has(slot)).map((slot) => ({
       viewType: slot,
@@ -713,13 +629,9 @@ export function buildGenerateRequest(input: GenerateInput): BuildResult<CreateGe
     if (!hasImage && !hasPrompt) {
       problems.push(problem('NO_INPUT', 'Give a prompt, an imageUrl or views to generate from.', 'imageUrl'))
     }
-    if (hasPrompt && !hasImage && !caps.barePrompt) {
-      problems.push(
-        problem(
-          'PROMPT_NEEDS_IMAGE',
-          `${label} generates from a picture. Make one from the prompt first, then send it as imageUrl with imageFromPrompt.`,
-          'prompt',
-        ),
+    if (hasPrompt && !hasImage) {
+      warnings.push(
+        `${label} builds from a picture, so the server draws one from the prompt first, unseen. To see or choose it, make the picture yourself and send it as imageUrl with imageFromPrompt.`,
       )
     }
     if (input.imageFromPrompt === true && !fromPrompt) {
@@ -741,49 +653,34 @@ export function buildGenerateRequest(input: GenerateInput): BuildResult<CreateGe
   if (faceCount !== undefined) request.faceCount = faceCount
 
   // ---------------------------------------------------------------------------- engine fields
-  // Quads ride on the low-poly base everywhere, and on any base where the engine takes them; never beside parts.
-  if ((base === OPERATIONS.LOWPOLY || caps.quadAnyBase) && !(partsBilled && polygonType === 'quad')) {
+  // Quads ride on any base where the engine takes them; never beside parts.
+  if (caps.quadAnyBase && !(partsBilled && polygonType === 'quad')) {
     request.polygonType = wirePolygonType(polygonType)
   }
   if (base === OPERATIONS.LOWPOLY && output === 'geometry' && caps.bareLowPoly) {
     request.generationType = 'Geometry'
   }
 
-  if (input.sketch === true) {
-    if (!caps.sketch) {
-      problems.push(problem('SKETCH_NOT_SUPPORTED', `${label} has no sketch mode. Use Zetta N1.`, 'sketch'))
-    } else if (base !== OPERATIONS.TEXTURED) {
-      problems.push(problem('SKETCH_NEEDS_TEXTURED', 'Sketch mode needs output textured at quality high or ultra.', 'sketch'))
-    } else {
-      request.generationType = 'Sketch'
-    }
-  }
-
   const metadata = buildMetadata(input, problems)
   if (metadata.availability) request.availability = metadata.availability
 
-  // The free tuning options: sent only when they change something, and only where the engine has them.
-  const tuningAsked: string[] = []
-  const tune = <K extends keyof CreateGenerationRequest>(name: K, value: CreateGenerationRequest[K]) => {
-    tuningAsked.push(name)
-    if (caps.imageTuning) request[name] = value
-  }
-  if (input.autoSize === true) tune('autoSize', true)
+  // The free tuning options: sent only when they change something. Every engine takes them.
+  if (input.autoSize === true) request.autoSize = true
   if (input.textureAlignment !== undefined) {
     if (checkEnum(problems, 'textureAlignment', input.textureAlignment, TEXTURE_ALIGNMENTS) && input.textureAlignment !== 'original_image') {
-      tune('textureAlignment', input.textureAlignment)
+      request.textureAlignment = input.textureAlignment
     }
-  } else if (caps.imageTuning) {
+  } else {
     // The Studio's default (fit to mesh) differs from the engine's, so it is sent.
     request.textureAlignment = 'geometry'
   }
-  if (input.autofixImage === true) tune('autofixImage', true)
-  if (input.compressGeometry === true) tune('compressGeometry', true)
-  if (input.delight === true) tune('delight', true)
+  if (input.autofixImage === true) request.autofixImage = true
+  if (input.compressGeometry === true) request.compressGeometry = true
+  if (input.delight === true) request.delight = true
   // Inverted: UVs are on unless turned off, so only `false` travels.
-  if (input.exportUv === false) tune('exportUv', false)
+  if (input.exportUv === false) request.exportUv = false
   if (input.textureFast === true) {
-    tune('textureFast', true)
+    request.textureFast = true
     if (textureQuality !== 'standard') warnings.push('textureFast only speeds up the standard texture tier, so it is ignored here.')
   }
   for (const seed of ['modelSeed', 'textureSeed'] as const) {
@@ -792,17 +689,8 @@ export function buildGenerateRequest(input: GenerateInput): BuildResult<CreateGe
     if (!isWholeNumber(value)) {
       problems.push(problem('SEED_NOT_WHOLE', `${seed} must be a whole number.`, seed))
     } else {
-      tune(seed, value)
+      request[seed] = value
     }
-  }
-  if (tuningAsked.length > 0 && !caps.imageTuning) {
-    problems.push(
-      problem(
-        'TUNING_NOT_SUPPORTED',
-        `${label} does not take ${tuningAsked.join(', ')}. Those options need Zetta N2.5, Np1 or Np1.5.`,
-        tuningAsked[0],
-      ),
-    )
   }
 
   if (metadata.title) request.title = metadata.title
@@ -837,6 +725,7 @@ export interface ThreeDEntitlements {
   allowsZettaNp1: boolean
   /** The refine tools. */
   allowsPostProcess: boolean
+  /** False exactly on an account with no paid plan, which cannot generate anything at all. */
   allowsPrivateGenerations: boolean
   /** Absent on older responses, where `allowsPrivateGenerations` answers the same question. */
   allowsSplat?: boolean
@@ -847,28 +736,43 @@ export interface ThreeDEntitlements {
 /** The count from which a request is asking for Ultra. */
 export const ULTRA_FACE_COUNT = 1_000_000
 
+/** What the server says to an account with no plan (403 `PLAN_REQUIRED`). */
+export const PLAN_REQUIRED_MESSAGE = 'Choose a plan to start generating.'
+
+/** Whether the plan may generate at all: every 3D and image job needs a paid plan. */
+export function hasPaidPlan(ent: ThreeDEntitlements): boolean {
+  return ent.allowsPrivateGenerations
+}
+
 /**
- * Every plan rule a request breaks, as the server checks them before any credits move (it answers
- * 403 `PLAN_CAPABILITY_REQUIRED` with the same list). Empty when the plan allows the request.
+ * Every plan rule a request breaks, as the server checks them before any credits move. An account
+ * with no paid plan gets one answer, `PLAN_REQUIRED` (403), whatever it asked for; a paid plan that
+ * lacks a feature gets the list the server answers 403 `PLAN_CAPABILITY_REQUIRED` with. Empty when
+ * the plan allows the request.
  */
 export function checkEntitlements(request: CreateGenerationRequest, ent: ThreeDEntitlements): Problem[] {
+  // No plan, no job: the server refuses before it looks at anything else.
+  if (!hasPaidPlan(ent)) return [problem('PLAN_REQUIRED', PLAN_REQUIRED_MESSAGE, 'plan')]
+
   const problems: Problem[] = []
   const base = request.spec.generation?.base
   const modifiers = request.spec.generation?.modifiers ?? []
   const postProcess = request.spec.postProcess ?? []
-  const model = (request.model ?? DEFAULT_GEN_MODEL).trim().toLowerCase()
+  // A retopology always runs on Zetta R1, whatever it names.
+  const model =
+    !request.spec.generation && postProcess.includes(OPERATIONS.SMART_TOPOLOGY)
+      ? 'r1'
+      : (request.model ?? DEFAULT_GEN_MODEL).trim().toLowerCase()
 
   // The model first: the broadest refusal.
   if (model === 'n25' && !ent.allowsZettaN25) {
-    problems.push(
-      problem('MODEL_NOT_AVAILABLE', 'Zetta N2.5 is available on paid plans. Zetta N1 generates from text and images on every plan.', 'engine'),
-    )
+    problems.push(problem('MODEL_NOT_AVAILABLE', `Zetta N2.5 is available on paid plans. ${PLAN_REQUIRED_MESSAGE}`, 'engine'))
   }
   if ((model === 'np1' || model === 'np15') && !ent.allowsZettaNp1) {
     problems.push(
       problem(
         'MODEL_NOT_AVAILABLE',
-        `${model === 'np1' ? 'Zetta Np1' : 'Zetta Np1.5'} is available on paid plans. Zetta N1 generates from text and images on every plan.`,
+        `Generate Smart 3D runs on ${model === 'np1' ? 'Zetta Np1' : 'the Zetta Np line'}, which is available on paid plans. ${PLAN_REQUIRED_MESSAGE}`,
         'engine',
       ),
     )
@@ -905,7 +809,7 @@ export function checkEntitlements(request: CreateGenerationRequest, ent: ThreeDE
       problems.push(
         problem(
           'MULTI_VIEW_TOO_MANY_IMAGES',
-          `Your plan takes up to ${ent.maxMultiViewImages} multi-view images and this request has ${views}. All 4 views are available from Basic.`,
+          `Your plan takes up to ${ent.maxMultiViewImages} multi-view images and this request has ${views}. Four views — front, back, left and right — is the most a generation takes.`,
           'views',
         ),
       )
@@ -927,7 +831,11 @@ export function checkEntitlements(request: CreateGenerationRequest, ent: ThreeDE
   // Quads are gated wherever they appear: generation, retopology or conversion.
   if (request.polygonType === 'quadrilateral' && !ent.allowsQuadMesh) {
     problems.push(
-      problem('QUAD_MESH_NOT_AVAILABLE', 'Quad meshes are available from Basic. Your plan outputs triangles.', 'polygonType'),
+      problem(
+        'QUAD_MESH_NOT_AVAILABLE',
+        'Quad meshes are available on paid plans, on both low-poly generation and retopology. Your plan outputs triangles.',
+        'polygonType',
+      ),
     )
   }
 
@@ -935,20 +843,19 @@ export function checkEntitlements(request: CreateGenerationRequest, ent: ThreeDE
     problems.push(
       problem(
         'CUSTOM_FACE_COUNT_NOT_AVAILABLE',
-        'Choosing your own polygon count is available on paid plans. Your plan generates at the density its quality implies.',
+        'Choosing your own polygon count is available on paid plans. Your plan generates at the density its quality setting implies.',
         'faceCount',
       ),
     )
   }
 
-  // The server's rule: Ultra is locked by plan, but a count below 1,000,000 is never clipped by plan
-  // (the Studio's lock also refuses counts above `maxFaceCount`; the server does not, and wins).
+  // The server's rule: Ultra is locked by plan, and a count of 1,000,000 or more asks for it too.
   const asksForUltra =
     modifiers.includes(OPERATIONS.DETAILED_GEOMETRY) ||
     (typeof request.faceCount === 'number' && request.faceCount >= ULTRA_FACE_COUNT)
   if (asksForUltra && ent.maxFaceCount < ULTRA_FACE_COUNT) {
     problems.push(
-      problem('ULTRA_DETAIL_NOT_AVAILABLE', 'Ultra detail is available from Basic. Your plan can generate at every other quality level.', 'quality'),
+      problem('ULTRA_DETAIL_NOT_AVAILABLE', 'Ultra detail is available on paid plans. Your plan can generate at every other quality level.', 'quality'),
     )
   }
 

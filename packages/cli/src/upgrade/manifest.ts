@@ -33,7 +33,15 @@ export interface LatestManifest {
   files: Record<string, ManifestFile>
 }
 
-export const DEFAULT_DOWNLOAD_BASE = 'https://downloads.zetta3d.ai/zcli'
+declare const __ZETTA_DOWNLOAD_BASE__: string | undefined
+
+/**
+ * Where releases are published. A release build bakes in the address it was uploaded to
+ * (`--define __ZETTA_DOWNLOAD_BASE__=…`, see scripts/release.ts), so installed copies find new
+ * versions there; anything else uses the public download host.
+ */
+export const DEFAULT_DOWNLOAD_BASE: string =
+  typeof __ZETTA_DOWNLOAD_BASE__ === 'string' && __ZETTA_DOWNLOAD_BASE__ ? __ZETTA_DOWNLOAD_BASE__ : 'https://downloads.zetta3d.ai/zcli'
 
 /** The download base without a trailing slash: the argument, else `ZETTA_DOWNLOAD_BASE`, else the default. */
 export function downloadBase(base?: string): string {

@@ -13,13 +13,13 @@ bun run zetta -- --profile local auth login     # against a local backend (see t
 | `bun run check` | Typecheck, every test, lint: run before every change you hand over |
 | `bun run test` | Vitest: SDK, request rules, pipelines, every CLI command group |
 | `bun run build [target]` | A binary for this machine, or for the targets you name (`windows`, `macos`, `alpine`, `all`, …) → `release/<platform>/`. `--release` builds and checks a full release, `--upload` sends the builds to the storage bucket ([releasing.md](releasing.md)) |
-| `bun run docs:commands` | Regenerates `docs/COMMANDS.md` and `skill/SKILL.md` from the command definitions |
+| `bun run docs:commands` | Regenerates `docs/COMMANDS.md` and the agent skill from the command definitions and `docs/`: the copy the binary embeds (`src/skill/docs.generated.ts`) and the browsable `skill/zetta3d/`. A test fails until you run it |
 | `bun run scan:vendor` | The vendor-name scan (needs the word list; see below) |
 | `bun run smoke:live` | The live smoke test against the real API |
 | `bun run evals` | Agent evals |
 | `bun run package:channels` | npm packages and the Homebrew formula from `dist/` |
 
-**Warning:** the backend's local `.env` points at the production database. Don't run the backend locally for CLI testing. Use the fake APIs in the tests, or the live smoke test with a test account.
+**Testing against a server:** use the fake APIs in the tests, or the live smoke test (`bun run smoke:live`) with a test account.
 
 ## Layout
 
@@ -42,7 +42,8 @@ packages/
     src/mcp/                the MCP server, generated from the same command definitions
     src/export/fbx.ts       GLB → FBX (three.js, loaded only for this)
     src/upgrade/            self-update and the release manifest
-    src/guide.ts            the agent guide; also SKILL.md
+    src/guide.ts            the agent guide; also the skill's SKILL.md
+    src/skill/              the agent skill: its files, where each agent reads skills, install and refresh
 install/                  install.sh, install.ps1 and the hosting checklist
 scripts/                  builds, scans, docs, smoke tests, evals, packaging
 evals/tasks.yaml          agent eval tasks
@@ -92,8 +93,8 @@ Runs the real CLI against the real API. It creates only what it deletes again.
 
 ```bash
 bun run smoke:live                                         # public checks only
-ZETTA_TOKEN=… bun run smoke:live                           # every free check, signed in
-ZETTA_TOKEN=… bun run smoke:live --paid --budget 200       # plus the cheapest paid jobs, capped at 200 credits
+ZETTA_API_KEY=… bun run smoke:live                           # every free check, signed in
+ZETTA_API_KEY=… bun run smoke:live --paid --budget 200       # plus the cheapest paid jobs, capped at 200 credits
 bun run smoke:live --bin dist/v0.1.0/zetta-darwin-arm64    # test a built binary
 ```
 
@@ -104,7 +105,7 @@ What the free checks cover:
 - uploads of a small GLB and a 12 MB GLB (multipart);
 - rename, tag and delete.
 
-The paid steps make the cheapest N1 model, export it locally, and retopologise it. It reports the 3D credits spent.
+The paid steps make the cheapest N2.5 model (untextured), export it locally, and retopologise it. It reports the 3D credits spent. The account needs a plan: without one, every paid step fails with `PLAN_REQUIRED`.
 
 ## Agent evals
 
@@ -112,8 +113,8 @@ Measures whether AI agents can finish real tasks with `zetta` alone.
 
 ```bash
 bun run evals --list
-ZETTA_TOKEN=… bun run evals                       # free tasks, Claude Code (`claude -p`) as the agent
-ZETTA_TOKEN=… bun run evals --paid                # tasks that spend credits, each capped
+ZETTA_API_KEY=… bun run evals                       # free tasks, Claude Code (`claude -p`) as the agent
+ZETTA_API_KEY=… bun run evals --paid                # tasks that spend credits, each capped
 bun run evals --no-skill                          # baseline without the skill
 bun run evals --agent 'my-agent --task {prompt}' --report evals.json
 ```
@@ -134,4 +135,4 @@ The word list comes from `ZETTA_VENDOR_WORDS` (comma-separated) or `ZETTA_VENDOR
 
 ## Keeping in step with the web app
 
-The request rules in `packages/sdk/src/builders` and `packages/sdk/src/pipeline` are ports of the web Studio's TypeScript. When the Studio's rules change, update the port and its parity tests together. The long-term fix is for the backend to own those rules (ROADMAP B6/B9).
+The request rules in `packages/sdk/src/builders` and `packages/sdk/src/pipeline` are ports of the web Studio's TypeScript. When the Studio's rules change, update the port and its parity tests together.

@@ -25,6 +25,7 @@
  * Exit codes: 0 clean (or no list and no --require-list), 1 hits found, 2 usage/configuration error.
  */
 import { spawnSync } from 'node:child_process'
+import { gunzipSync } from 'node:zlib'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join, relative, resolve, sep } from 'node:path'
@@ -268,6 +269,17 @@ let baselineDir: string | undefined
  * Contexts of every match inside an empty program compiled for the same Bun target: what the
  * runtime alone contains. Undefined (with a warning) if that build is not possible here.
  */
+/**
+ * The build key of a compiled zetta: from its release name (zetta-darwin-arm64), or from the npm
+ * platform package that carries it (npm/cli-darwin-arm64/bin/zetta), so both get the runtime baseline.
+ */
+export function binaryKey(file: string): string | undefined {
+  const fromName = keyFromBinaryName(basename(file))
+  if (fromName) return fromName
+  const npm = /[\\/]cli-([a-z0-9-]+)[\\/]bin[\\/]zetta(\.exe)?$/.exec(file)
+  return npm ? keyFromBinaryName(`zetta-${npm[1]}${npm[2] ?? ''}`) : undefined
+}
+
 function runtimeBaseline(key: string, matchers: { text: RegExp; utf16: RegExp }): Set<string> | undefined {
   if (baselines.has(key)) return baselines.get(key)
   baselineDir ??= mkdtempSync(join(tmpdir(), 'zetta-scan-'))
@@ -340,11 +352,15 @@ function main(): void {
   let ignored = 0
   let bytes = 0
   for (const file of targets) {
-    const buf = readFileSync(file)
+    let buf = readFileSync(file)
+    // A gzip copy of a release binary is scanned as what it unpacks to: compressed bytes are close
+    // to random, so short words turn up in them by chance, and the unpacked bytes are what people run.
+    const packed = file.endsWith('.gz') && binaryKey(file.slice(0, -3)) !== undefined
+    if (packed) buf = gunzipSync(buf)
     bytes += buf.length
     const binary = buf.subarray(0, 8192).includes(0)
     let hits = binary ? scanBytes(buf, matchers) : scanText(buf.toString('utf8'), matchers.text)
-    const key = keyFromBinaryName(basename(file))
+    const key = binaryKey(packed ? file.slice(0, -3) : file)
     if (binary && key && hits.length > 0 && !values['raw-binaries']) {
       const runtime = runtimeBaseline(key, matchers)
       if (runtime) {

@@ -5,7 +5,18 @@
  * drops fields known to carry upstream identifiers or costs, and replaces server messages for
  * error codes whose text can quote an upstream provider.
  */
-const DROPPED_DETAIL_KEYS = new Set(['category', 'scope', 'vendor', 'vendorCredits', 'vendorAmount', 'model', 'allowedModels', 'maxDrainMultiplierX100', 'reason'])
+const DROPPED_DETAIL_KEYS = new Set([
+  'category',
+  'scope',
+  'perCategory',
+  'vendor',
+  'vendorCredits',
+  'vendorAmount',
+  'model',
+  'allowedModels',
+  'maxDrainMultiplierX100',
+  'reason',
+])
 
 const OWN_MESSAGES: Record<string, string> = {
   IMAGE_GEN_QUOTA: 'The image engine is over capacity right now. Try again later.',

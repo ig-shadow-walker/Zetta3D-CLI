@@ -48,12 +48,16 @@ describe('config and credentials', () => {
     expect(new ConfigStore(dir).get('spend.maxPerCommand')).toBe(200)
     expect(() => config.set('spend.maxPerCommand', 'lots')).toThrow()
   })
-  it('stores tokens in a private file without a keychain, and prefers ZETTA_TOKEN', async () => {
+  it('stores sign-ins in a private file without a keychain; ZETTA_API_KEY wins, and only with a key', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zc-'))
     const store = new CredentialStore(dir, { ZETTA_NO_KEYCHAIN: '1' })
     expect(await store.set('default', { token: 't1', savedAt: 'now' })).toBe('file')
     expect((await store.get('default'))?.credential.token).toBe('t1')
-    expect((await new CredentialStore(dir, { ZETTA_NO_KEYCHAIN: '1', ZETTA_TOKEN: 'env' }).get('default'))?.source).toBe('env')
+    const key = `zk_live_${'K'.repeat(43)}`
+    expect(await new CredentialStore(dir, { ZETTA_NO_KEYCHAIN: '1', ZETTA_API_KEY: key }).get('default')).toMatchObject({ source: 'env', kind: 'api_key' })
+    // ZETTA_TOKEN is not read any more, and ZETTA_API_KEY takes nothing but a key.
+    expect((await new CredentialStore(dir, { ZETTA_NO_KEYCHAIN: '1', ZETTA_TOKEN: 'env' }).get('default'))?.source).toBe('file')
+    await expect(new CredentialStore(dir, { ZETTA_NO_KEYCHAIN: '1', ZETTA_API_KEY: tokenFor() }).get('default')).rejects.toMatchObject({ code: 'INVALID_API_KEY' })
     expect(await store.delete('default')).toBe(true)
     expect(await store.get('default')).toBeUndefined()
   })
@@ -89,10 +93,10 @@ describe('home and settings folders', () => {
 describe('program', () => {
   it('prints JSON when piped and text in a terminal', async () => {
     const { fetch } = fakeFetch([['GET https://api.zetta3d.ai/api/auth/me', { json: { user, onboardingBonus: null } }]])
-    const piped = await zetta(['account', 'credits'], { fetch, env: { ZETTA_TOKEN: tokenFor() } })
+    const piped = await zetta(['account', 'credits'], { fetch, env: { ZETTA_TEST_SIGN_IN: tokenFor() } })
     expect(piped.code).toBe(0)
     expect(piped.json().threeD.total).toBe(650)
-    const tty = await zetta(['account', 'credits'], { fetch, env: { ZETTA_TOKEN: tokenFor() }, tty: true })
+    const tty = await zetta(['account', 'credits'], { fetch, env: { ZETTA_TEST_SIGN_IN: tokenFor() }, tty: true })
     expect(tty.stdout).toContain('3D credits')
   })
 
@@ -100,14 +104,14 @@ describe('program', () => {
     const bad = await zetta(['asset', 'list', '--nope'])
     expect(bad.code).toBe(2)
     expect(bad.errorJson().error.code).toBe('USAGE')
-    const badInput = await zetta(['asset', 'list', '--input', '{"wat":1}'], { env: { ZETTA_TOKEN: tokenFor() } })
+    const badInput = await zetta(['asset', 'list', '--input', '{"wat":1}'], { env: { ZETTA_TEST_SIGN_IN: tokenFor() } })
     expect(badInput.code).toBe(2)
     expect(badInput.errorJson().error.message).toContain('wat')
   })
 
   it('takes inputs from --input JSON, overridden by flags', async () => {
     const { fetch, calls } = fakeFetch([['GET https://api.zetta3d.ai/api/3d/generations', { json: { items: [generation(5)], total: 1, page: 1, pageSize: 3 } }]])
-    const run = await zetta(['asset', 'list', '--input', '{"limit":50,"search":"chair"}', '--limit', '3'], { fetch, env: { ZETTA_TOKEN: tokenFor() } })
+    const run = await zetta(['asset', 'list', '--input', '{"limit":50,"search":"chair"}', '--limit', '3'], { fetch, env: { ZETTA_TEST_SIGN_IN: tokenFor() } })
     expect(run.code).toBe(0)
     const url = new URL(calls[0]!.url)
     expect(url.searchParams.get('pageSize')).toBe('3')
@@ -117,14 +121,14 @@ describe('program', () => {
 
   it('exits 3 when signed out, and 3 for an expired token', async () => {
     expect((await zetta(['account', 'show'])).code).toBe(3)
-    const expired = await zetta(['account', 'show'], { env: { ZETTA_TOKEN: tokenFor(1000) } })
+    const expired = await zetta(['account', 'show'], { env: { ZETTA_TEST_SIGN_IN: tokenFor(1000) } })
     expect(expired.code).toBe(3)
     expect(expired.errorJson().error.code).toBe('INVALID_SESSION')
   })
 
   it('exits 9 when waiting on a job that failed', async () => {
     const { fetch } = fakeFetch([['GET https://api.zetta3d.ai/api/3d/generations/9', { json: { generation: generation(9, 'failed'), queuePosition: null } }]])
-    const run = await zetta(['asset', 'wait', '9'], { fetch, env: { ZETTA_TOKEN: tokenFor() } })
+    const run = await zetta(['asset', 'wait', '9'], { fetch, env: { ZETTA_TEST_SIGN_IN: tokenFor() } })
     expect(run.code).toBe(9)
     expect(run.errorJson().error.message).toContain('could not be read')
   })
@@ -138,24 +142,32 @@ describe('program', () => {
     expect(schema.inputSchema.required).toEqual(['id'])
   })
 
-  it('signs in with a token from stdin and stores it', async () => {
-    const { fetch } = fakeFetch([['GET https://api.zetta3d.ai/api/auth/me', { json: { user, onboardingBonus: null } }]])
-    const dir = mkdtempSync(join(tmpdir(), 'zc-'))
-    const login = await zetta(['auth', 'login', '--with-token'], { fetch, stdin: tokenFor(), configDir: dir })
-    expect(login.code).toBe(0)
-    expect(login.json()).toMatchObject({ signedIn: true, email: 'dev@example.com', storedIn: 'credentials file' })
-    const status = await zetta(['auth', 'status'], { fetch, configDir: dir })
-    expect(status.json()).toMatchObject({ signedIn: true, tokenSource: 'file' })
+  it('signs in only with the browser or an API key', async () => {
+    // The token and emailed-link ways are gone.
+    expect((await zetta(['auth', 'login', '--with-token'], { stdin: tokenFor() })).code).toBe(2)
+    expect((await zetta(['auth', 'login', '--email', 'a@b.c'])).code).toBe(2)
+    expect((await zetta(['auth', 'token'])).code).not.toBe(0)
+    // The browser sign-in needs a person at a terminal, and a browser on this computer.
+    const script = await zetta(['auth', 'login'])
+    expect(script.code).toBe(2)
+    expect(script.errorJson().error.message).toContain('ZETTA_API_KEY')
+    const ssh = await zetta(['auth', 'login'], { tty: true, env: { CI: 'false', SSH_CONNECTION: '10.0.0.2 51000 10.0.0.1 22' } })
+    expect(ssh.code).toBe(2)
+    expect(ssh.stderr).toContain('API key')
+    // An old ZETTA_TOKEN is not used, and says so.
+    const legacy = await zetta(['account', 'show'], { env: { ZETTA_TOKEN: tokenFor() } })
+    expect(legacy.code).toBe(3)
+    expect(legacy.errorJson().error.message).toContain('ZETTA_TOKEN is no longer read')
   })
 })
 
 describe('positionals', () => {
   it('can come from --input, and are still required', async () => {
     const { fetch } = fakeFetch([['GET https://api.zetta3d.ai/api/3d/generations/5', { json: { generation: generation(5), queuePosition: null } }]])
-    const viaInput = await zetta(['asset', 'get', '--input', '{"id":5}'], { fetch, env: { ZETTA_TOKEN: tokenFor() } })
+    const viaInput = await zetta(['asset', 'get', '--input', '{"id":5}'], { fetch, env: { ZETTA_TEST_SIGN_IN: tokenFor() } })
     expect(viaInput.code).toBe(0)
     expect(viaInput.json().id).toBe(5)
-    const missing = await zetta(['asset', 'get'], { env: { ZETTA_TOKEN: tokenFor() } })
+    const missing = await zetta(['asset', 'get'], { env: { ZETTA_TEST_SIGN_IN: tokenFor() } })
     expect(missing.code).toBe(2)
     expect(missing.errorJson().error.message).toContain('<id>')
   })

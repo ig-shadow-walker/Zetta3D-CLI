@@ -17,6 +17,7 @@ export interface ConfigFile {
   output?: 'text' | 'json' | 'ndjson'
   defaults?: { wait?: boolean; engine?: string }
   download?: { auto?: boolean; dir?: string; formats?: string[] }
+  skills?: { auto?: boolean }
   spend?: { maxPerCommand?: number | null; requireConfirm?: boolean }
 }
 
@@ -29,12 +30,16 @@ export const BUILT_IN_PROFILES: Record<string, Profile> = {
 export const CONFIG_KEYS: Record<string, { type: 'string' | 'number' | 'boolean' | 'enum' | 'list'; values?: string[]; description: string }> = {
   output: { type: 'enum', values: ['text', 'json', 'ndjson'], description: 'Default output format (otherwise text in a terminal, JSON when piped).' },
   'defaults.wait': { type: 'boolean', description: 'Wait for paid jobs to finish unless --no-wait is given.' },
-  'defaults.engine': { type: 'string', description: 'Default engine for `zetta generate` (n1, n25, np1, np15).' },
+  'defaults.engine': { type: 'string', description: 'Default engine for `zetta generate` (n2.5, np1, np1.5; n2.5 when unset).' },
   'download.auto': {
     type: 'boolean',
     description: 'Download finished jobs into the folder you run zetta in. Unset: on in a terminal, off for scripts and agents. --download / --no-download override it per command.',
   },
   'download.dir': { type: 'string', description: 'Folder for automatic downloads instead of the current one (relative paths start from the current folder).' },
+  'skills.auto': {
+    type: 'boolean',
+    description: 'Install the AI-agent skill for Claude Code, Codex and Cursor automatically, and keep it up to date (default true; `zetta skill uninstall` sets it to false).',
+  },
   'download.formats': { type: 'list', description: 'Only these formats in automatic downloads, comma-separated, e.g. glb,fbx (default: every result file).' },
   'spend.maxPerCommand': { type: 'number', description: 'Credits a single command may spend without --yes or --max-credits.' },
   'spend.requireConfirm': { type: 'boolean', description: 'Ask before spending in a terminal (default true).' },

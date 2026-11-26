@@ -1,15 +1,51 @@
 import { LocalErrorCodes, ZettaError } from '../errors'
 import type { Transport } from '../transport'
 import type { MeResponse, OnboardingAnswers, PluginTokenResponse, PublicUser, VerifyResponse } from '../types'
+import { isApiKey } from './api-keys'
 
 export const SESSION_COOKIE = 'zetta_session'
+
+/** Fields of the signed-in account added after `PublicUser` was first described. All optional for older servers. */
+export interface AccountExtras {
+  /** A trial from a trial code while it runs (`plan` is the plan it unlocked); null otherwise. */
+  trial?: { endsAt: string; plan: string } | null
+  /** Whether this account may still redeem a trial code. */
+  trialAvailable?: boolean
+  /** Whether an Agent plan is in force. */
+  agentPlan?: boolean
+}
+
+export type AccountUser = PublicUser & AccountExtras
+
+export interface AccountResponse extends Omit<MeResponse, 'user' | 'onboardingBonus'> {
+  user: AccountUser
+  /** 3D credits finishing onboarding would still pay; 0 when there is nothing to collect. */
+  onboardingBonus: number | null
+}
+
+/** A desktop plugin or CLI this account is connected to. */
+export interface PluginConnection {
+  /** `unity`, `blender`, `unreal`, `cli`, `cli-mcp`, `sdk`, or `plugin` for a client that did not say. */
+  client: string
+  pluginVersion: string | null
+  /** The application it runs in (e.g. the Unity Editor's version). */
+  hostVersion: string | null
+  firstSeenAt: string
+  lastSeenAt: string
+}
 
 export class Auth {
   constructor(private readonly transport: Transport) {}
 
-  /** The signed-in account, its plan and credit balances. */
-  me(): Promise<MeResponse> {
-    return this.transport.request<MeResponse>('GET', '/auth/me')
+  /** The signed-in account, its plan, trial and credit balances. Works with an API key too. */
+  me(): Promise<AccountResponse> {
+    return this.transport.request<AccountResponse>('GET', '/auth/me')
+  }
+
+  /** Plugins and CLIs connected to this account, most recently seen first. Browser sign-in only. */
+  async connections(): Promise<PluginConnection[]> {
+    const result = await this.transport.request<{ connections: PluginConnection[] }>('GET', '/auth/connections')
+    return result.connections ?? []
   }
 
   /** Emails a sign-in link (also creates the account on first use). The answer never says whether the address exists. */
@@ -48,11 +84,11 @@ export class Auth {
     return this.transport.request('POST', '/auth/logout', { retry: 'never' })
   }
 
-  completeOnboarding(answers: OnboardingAnswers): Promise<{ user: PublicUser; granted: boolean; onboardingBonus: unknown }> {
+  completeOnboarding(answers: OnboardingAnswers): Promise<{ user: AccountUser; granted: boolean; onboardingBonus: number | null }> {
     return this.transport.request('POST', '/auth/onboarding/complete', { body: answers, retry: 'never' })
   }
 
-  /** Deletes the account. Fails with SUBSCRIPTION_ACTIVE while a subscription is live. */
+  /** Deletes the account. Fails with SUBSCRIPTION_ACTIVE while a subscription or an Agent plan is live. */
   deleteAccount(): Promise<{ message: string }> {
     return this.transport.request('DELETE', '/auth/account', { retry: 'never' })
   }
@@ -81,8 +117,12 @@ export function sessionFromSetCookie(headers: Headers): string | undefined {
   return undefined
 }
 
-/** Reads a JWT's `exp` without verifying it (only to tell the user when to sign in again). */
+/**
+ * Reads a JWT's `exp` without verifying it (only to tell the user when to sign in again).
+ * An API key is not a JWT and does not expire: always undefined for one.
+ */
 export function tokenExpiry(token: string): Date | undefined {
+  if (isApiKey(token)) return undefined
   const part = token.split('.')[1]
   if (!part) return undefined
   try {

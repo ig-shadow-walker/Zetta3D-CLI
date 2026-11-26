@@ -53,6 +53,8 @@ export const LocalErrorCodes = {
   JOB_CANCELLED: 'JOB_CANCELLED',
   WAIT_TIMEOUT: 'WAIT_TIMEOUT',
   DOWNLOAD_FAILED: 'DOWNLOAD_FAILED',
+  /** The command needs a browser sign-in, and the client holds an API key. Also the server's code. */
+  API_KEY_NOT_ALLOWED: 'API_KEY_NOT_ALLOWED',
 } as const
 
 const STATUS_CODES: Record<number, string> = {
@@ -85,6 +87,15 @@ function joinMessage(message: unknown): string | undefined {
   return undefined
 }
 
+function retryAfterSeconds(value: unknown): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? Math.ceil(value) : undefined
+  if (typeof value !== 'string' || !value.trim()) return undefined
+  const seconds = Number(value)
+  if (Number.isFinite(seconds)) return seconds >= 0 ? Math.ceil(seconds) : undefined
+  const date = Date.parse(value)
+  return Number.isFinite(date) ? Math.max(0, Math.ceil((date - Date.now()) / 1000)) : undefined
+}
+
 /**
  * Turns an error response into a `ZettaError`.
  *
@@ -113,8 +124,16 @@ export function errorFromResponse(status: number, body: unknown, retryAfter?: st
   }
 
   if (!code && status === 429) code = 'RATE_LIMITED'
-  if (status === 429) message = 'Too many requests. Slow down and try again shortly.'
-  if (retryAfter) details.retryAfter = retryAfter
+  // `retryAfter` is always whole seconds: from the header (seconds or a date), else the body's own field.
+  const wait = retryAfterSeconds(retryAfter) ?? retryAfterSeconds(details.retryAfter)
+  if (wait !== undefined) details.retryAfter = wait
+  else if (retryAfter) details.retryAfter = retryAfter
+  if (status === 429) {
+    message =
+      wait !== undefined && wait > 0
+        ? `Too many requests. Try again in ${wait} second${wait === 1 ? '' : 's'}.`
+        : 'Too many requests. Slow down and try again shortly.'
+  }
 
   return new ZettaError({
     code: code ?? codeForStatus(status),

@@ -11,6 +11,8 @@
 #   ZETTA_INSTALL_DIR      install into this folder instead of %LOCALAPPDATA%\zetta\bin
 #   ZETTA_DOWNLOAD_BASE    download host (default https://downloads.zetta3d.ai/zcli)
 #   ZETTA_NO_MODIFY_PATH=1 do not change the user PATH
+#   ZETTA_NO_SKILL=1       do not install the skill for AI coding agents (Claude Code, Codex, Cursor)
+#   ZETTA_NO_LOGIN=1       do not start the browser sign-in after installing
 #
 # Everything is inside a script block that runs on the last line, so a partly downloaded script
 # does nothing, and no variables or preferences leak into your session.
@@ -256,8 +258,40 @@
         } elseif ($env:ZETTA_NO_MODIFY_PATH -eq '1') {
             Write-Line "$dir was not added to PATH (ZETTA_NO_MODIFY_PATH=1)."
         }
+        # Teach the AI coding agents found here (Claude Code, Codex, Cursor) to use zetta. Never fails the install.
+        if ($env:ZETTA_NO_SKILL -ne '1') {
+            try {
+                $skill = (& $exe skill install --auto --output text 2>$null | Out-String).Trim()
+                if ($LASTEXITCODE -eq 0 -and $skill -match '^(Installed|Updated|Up to date)') { Write-Line $skill }
+            } catch { }
+        }
+
+        # Connect zetta to the user's Zetta 3D account with the browser sign-in, when a person is at this
+        # window. Skipped in CI, when output is redirected, when ZETTA_API_KEY is set, with ZETTA_NO_LOGIN=1,
+        # and when already signed in. Never fails the install.
+        $signedIn = $false
+        if ($env:ZETTA_NO_LOGIN -ne '1' -and -not $env:CI -and -not $env:ZETTA_API_KEY -and $Interactive -and [Environment]::UserInteractive) {
+            try {
+                # `auth status` succeeds either way; what it says decides.
+                $status = (& $exe auth status --output json 2>$null | Out-String)
+                if ($status -match '"signedIn":\s*true') {
+                    Write-Line 'Signed in already.'
+                    $signedIn = $true
+                } else {
+                    Write-Line ''
+                    Write-Line 'Sign in to your Zetta 3D account. Your browser opens; sign in there and click Connect (Ctrl-C to do it later).' 'Cyan'
+                    & $exe auth login
+                    $signedIn = ($LASTEXITCODE -eq 0)
+                }
+            } catch { }
+        }
+
         Write-Line ''
-        Write-Line 'Next: zetta auth login' 'Cyan'
+        if ($signedIn) {
+            Write-Line 'You are all set. Try: zetta generate -p "a wooden chair"  (or zetta --help)' 'Cyan'
+        } else {
+            Write-Line 'Next: zetta auth login (signs you in with your browser; on a server or in CI, use an API key: ZETTA_API_KEY)' 'Cyan'
+        }
     }
 
     try {

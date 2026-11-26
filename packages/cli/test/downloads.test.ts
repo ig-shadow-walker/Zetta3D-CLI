@@ -9,7 +9,7 @@ import { fakeFetch } from './fake-fetch'
 import { generation, tokenFor, zetta } from './harness'
 
 const API = 'https://api.zetta3d.ai/api'
-const env = { ZETTA_TOKEN: tokenFor(), CI: 'false' }
+const env = { ZETTA_TEST_SIGN_IN: tokenFor(), CI: 'false' }
 const temp = (prefix: string) => mkdtempSync(join(tmpdir(), prefix))
 
 function png(dir: string): string {

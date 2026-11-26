@@ -1,12 +1,15 @@
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import type { Context } from '../core/context'
 import { defineCommand } from '../core/define'
 import { usageError } from '../core/errors'
 import { appDataDir, homeDir } from '../core/paths'
-import { SKILL_NAME, skillMarkdown } from '../guide'
+import { guideText, SKILL_NAME } from '../guide'
+import { autoSkillsOff, skillFiles } from '../skill/bundle'
+import { AGENT_LABEL, detectAgents, installedVersion, removeSkill, servedBy, skillsFolder, targetsFor, writeSkill, type Agent, type SkillTarget } from '../skill/install'
+import { VERSION } from '../version'
 import { isCompiledBinary } from '../upgrade'
 
 const START = 'zetta3d:start'
@@ -17,10 +20,6 @@ export function zettaExecutable(): string {
   return isCompiledBinary() ? process.execPath : 'zetta'
 }
 
-function skillPath(ctx: Context, project: boolean, dir: string | undefined): string {
-  if (dir) return join(resolve(ctx.cwd, dir), SKILL_NAME, 'SKILL.md')
-  return join(project ? ctx.cwd : homeDir(ctx.env), '.claude', 'skills', SKILL_NAME, 'SKILL.md')
-}
 
 /** Writes a file, keeping one `.bak` of whatever was there. Returns whether anything changed. */
 function writeWithBackup(path: string, content: string): 'created' | 'updated' | 'unchanged' {
@@ -84,52 +83,150 @@ function desktopConfigPath(env: NodeJS.ProcessEnv): string {
   return join(env.XDG_CONFIG_HOME || join(homeDir(env), '.config'), 'Claude', 'claude_desktop_config.json')
 }
 
+const AGENTS = ['claude', 'codex', 'cursor', 'all'] as const
+type AgentChoice = (typeof AGENTS)[number]
+
+const agentField = z
+  .enum(AGENTS)
+  .optional()
+  .describe('Which agent: claude (Claude Code), codex, cursor, or all (default: the agents found on this machine).')
+
+interface SkillPlace {
+  /** Who reads this folder, e.g. "Codex and Cursor". */
+  agents: string
+  /** The skills folder; the skill is its zetta3d/ subfolder. */
+  folder: string
+}
+
+/** The skills folders an install or uninstall acts on. */
+function skillPlaces(ctx: Context, input: { agent?: AgentChoice | undefined; project?: boolean | undefined; dir?: string | undefined }, found: Agent[]): SkillPlace[] {
+  if (input.dir) return [{ agents: 'a custom folder', folder: resolve(ctx.cwd, input.dir) }]
+  const root = input.project ? ctx.cwd : homeDir(ctx.env)
+  const agents: Agent[] =
+    input.agent === 'all' ? ['claude', 'codex', 'cursor'] : input.agent ? [input.agent] : input.project ? ['claude', 'codex', 'cursor'] : found
+  return targetsFor(agents).map((target) => ({ agents: servedBy(target, agents), folder: skillsFolder(root, target) }))
+}
+
+/** Records the user's choice, so installers and upgrades follow it. */
+function setAutoSkills(ctx: Context, on: boolean): void {
+  if ((ctx.config.file.skills?.auto ?? true) === on) return
+  try {
+    ctx.config.set('skills.auto', String(on))
+    ctx.config.save()
+  } catch {
+    // Not being able to save the preference must not fail the install.
+  }
+}
+
 export const skillInstall = defineCommand({
   path: ['skill', 'install'],
-  summary: 'Install the Zetta 3D skill so AI agents (e.g. Claude Code) know how to use this CLI.',
-  description: 'Default: ~/.claude/skills/zetta3d/SKILL.md (all your projects). --project: ./.claude/skills/ (this repository). --dir: any skills folder.',
+  summary: 'Install the Zetta 3D skill, so AI coding agents (Claude Code, Codex, Cursor) know how to use this CLI.',
+  description: [
+    'The skill is a folder (SKILL.md plus reference files) in the place each agent reads skills from:',
+    '  ~/.claude/skills/zetta3d   Claude Code (Cursor reads it too)',
+    '  ~/.agents/skills/zetta3d   Codex and Cursor',
+    'By default it goes to the agents found on this machine; --agent picks one, or all. --project installs into this repository (.claude/skills and .agents/skills) instead.',
+    'The installers run this with --auto, and every newer zetta refreshes the installed copies by itself. `zetta skill uninstall` stops that.',
+  ].join('\n'),
   kind: 'local',
   mcp: false,
   input: z.object({
-    project: z.boolean().optional().describe('Install for this project only (./.claude/skills).'),
+    agent: agentField,
+    project: z.boolean().optional().describe('Install into this repository instead of your home folder.'),
     dir: z.string().optional().describe('Install into this skills folder instead.'),
+    auto: z.boolean().optional().describe('As the installers do: only for agents found here, and not if you turned it off (skills.auto false or ZETTA_NO_SKILL=1).'),
   }),
+  examples: ['zetta skill install', 'zetta skill install --agent codex', 'zetta skill install --project'],
   async run(ctx, input) {
-    const path = skillPath(ctx, Boolean(input.project), input.dir)
-    const result = writeWithBackup(path, skillMarkdown())
-    return { skill: SKILL_NAME, path, result }
+    const found = detectAgents(ctx.env)
+    if (input.auto) {
+      if (autoSkillsOff(ctx.env)) return { skill: SKILL_NAME, version: VERSION, installed: [], note: 'Skipped: automatic skill installs are turned off (`zetta skill install` turns them back on).' }
+      if (!found.length) return { skill: SKILL_NAME, version: VERSION, installed: [], note: 'No AI coding agent found (Claude Code, Codex, Cursor). Install the skill later with `zetta skill install`.' }
+    }
+    let places = skillPlaces(ctx, input, found)
+    let note: string | undefined
+    if (!places.length) {
+      // Nothing found and nothing named: the shared Agent Skills folder, which most agents read.
+      places = [{ agents: 'Codex, Cursor and other Agent Skills tools', folder: skillsFolder(homeDir(ctx.env), 'agents') }]
+      note = 'No AI coding agent found here, so the skill went to the shared Agent Skills folder. Use --agent claude for Claude Code.'
+    }
+    const files = await skillFiles()
+    const installed = places.map((place) => ({ agents: place.agents, ...writeSkill(place.folder, files, VERSION) }))
+    if (!input.auto && !input.project && !input.dir) setAutoSkills(ctx, true)
+    return { skill: SKILL_NAME, version: VERSION, installed, ...(note ? { note } : {}) }
   },
-  text: (r: { path: string; result: string }) => (r.result === 'unchanged' ? `Already up to date: ${r.path}` : `Skill ${r.result}: ${r.path}`),
+  text: (r: { version: string; installed: Array<{ agents: string; dir: string; result: string }>; note?: string }) =>
+    [
+      ...r.installed.map((i) => `${i.result === 'unchanged' ? 'Up to date' : i.result === 'created' ? 'Installed' : 'Updated'} the Zetta 3D skill (${r.version}) for ${i.agents}: ${i.dir}`),
+      ...(r.note ? [r.note] : []),
+    ].join('\n'),
 })
 
 export const skillUninstall = defineCommand({
   path: ['skill', 'uninstall'],
-  summary: 'Remove the installed Zetta 3D skill.',
+  summary: 'Remove the Zetta 3D skill, and stop installers and upgrades from putting it back.',
+  description: 'Without --agent, it is removed from every agent folder in your home folder. Only folders that hold the Zetta 3D skill are touched.',
   kind: 'local',
   mcp: false,
   input: z.object({
-    project: z.boolean().optional().describe('Remove it from this project (./.claude/skills).'),
+    agent: agentField,
+    project: z.boolean().optional().describe('Remove it from this repository instead.'),
     dir: z.string().optional().describe('Remove it from this skills folder.'),
   }),
   async run(ctx, input) {
-    const path = skillPath(ctx, Boolean(input.project), input.dir)
-    const existed = existsSync(path)
-    if (existed) rmSync(dirname(path), { recursive: true, force: true })
-    return { path, removed: existed }
+    const places = skillPlaces(ctx, { ...input, agent: input.agent ?? 'all' }, [])
+    const results = places.map((place) => ({ agents: place.agents, ...removeSkill(place.folder) }))
+    if (!input.project && !input.dir && !input.agent) setAutoSkills(ctx, false)
+    return { removed: results.filter((r) => r.removed).map((r) => r.dir), skipped: results.filter((r) => r.notOurs).map((r) => r.dir) }
   },
-  text: (r: { path: string; removed: boolean }) => (r.removed ? `Removed ${r.path}` : 'The skill was not installed there.'),
+  text: (r: { removed: string[]; skipped: string[] }) =>
+    [
+      ...(r.removed.length ? r.removed.map((dir) => `Removed ${dir}`) : ['The skill was not installed.']),
+      ...r.skipped.map((dir) => `Left ${dir} alone: it is not the Zetta 3D skill.`),
+    ].join('\n'),
+})
+
+export const skillStatus = defineCommand({
+  path: ['skill', 'status'],
+  summary: 'Where the Zetta 3D skill is installed, and whether it is up to date.',
+  kind: 'local',
+  mcp: false,
+  input: z.object({ project: z.boolean().optional().describe('Look in this repository instead of your home folder.') }),
+  async run(ctx, input) {
+    const root = input.project ? ctx.cwd : homeDir(ctx.env)
+    const found = detectAgents(ctx.env)
+    const places = (['claude', 'agents'] as const).map((target) => {
+      const dir = join(skillsFolder(root, target), SKILL_NAME)
+      const version = installedVersion(dir)
+      return { agents: servedBy(target), dir, installed: version !== undefined, version: version ?? null, upToDate: version === VERSION }
+    })
+    return { version: VERSION, agentsFound: found.map((agent) => AGENT_LABEL[agent]), auto: !autoSkillsOff(ctx.env), places }
+  },
+  text: (r: { version: string; agentsFound: string[]; auto: boolean; places: Array<{ agents: string; dir: string; installed: boolean; version: string | null; upToDate: boolean }> }) =>
+    [
+      `Agents found: ${r.agentsFound.length ? r.agentsFound.join(', ') : 'none'} · automatic installs and updates: ${r.auto ? 'on' : 'off'}`,
+      ...r.places.map((p) => `  ${p.agents.padEnd(18)} ${p.installed ? (p.upToDate ? `installed (${r.version})` : `installed, ${p.version ?? 'an older version'} → run \`zetta skill install\``) : 'not installed'}  ${p.dir}`),
+    ].join('\n'),
 })
 
 export const skillShow = defineCommand({
   path: ['skill', 'show'],
-  summary: 'Print the skill file (SKILL.md) for frameworks that load skills from elsewhere.',
+  summary: 'Print the skill (SKILL.md, or one of its files), for agents and frameworks that load skills from elsewhere.',
   kind: 'local',
   mcp: false,
-  input: z.object({}),
-  async run() {
-    return { name: SKILL_NAME, markdown: skillMarkdown() }
+  input: z.object({
+    file: z.string().optional().describe('Print this file instead, e.g. references/pipelines.md.'),
+    list: z.boolean().optional().describe('List the skill’s files.'),
+  }),
+  async run(ctx, input) {
+    const files = await skillFiles()
+    if (input.list) return { name: SKILL_NAME, files: Object.keys(files) }
+    const file = input.file ?? 'SKILL.md'
+    const text = files[file] ?? files[`references/${file}`] ?? files[`references/${file}.md`]
+    if (text === undefined) throw usageError(`The skill has no ${file}. Files: ${Object.keys(files).join(', ')}.`)
+    return { name: SKILL_NAME, file, markdown: text }
   },
-  text: (r: { markdown: string }) => r.markdown,
+  text: (r: { files?: string[]; markdown?: string }) => (r.files ? r.files.join('\n') : r.markdown!),
 })
 
 const CLIENTS = ['claude-code', 'claude-desktop', 'cursor', 'codex', 'agents-md'] as const
@@ -145,10 +242,10 @@ export const setupCommand = defineCommand({
   path: ['setup'],
   summary: 'Connect an AI tool to Zetta 3D: Claude Code, Claude Desktop, Cursor, Codex, or an AGENTS.md.',
   description: [
-    'claude-code     installs the skill and registers the MCP server (`claude mcp add`).',
+    'claude-code     installs the skill (~/.claude/skills) and registers the MCP server (`claude mcp add`).',
     'claude-desktop  adds the MCP server to claude_desktop_config.json.',
-    'cursor          adds the MCP server to ~/.cursor/mcp.json.',
-    'codex           adds the MCP server to ~/.codex/config.toml and the guide to ~/.codex/AGENTS.md.',
+    'cursor          installs the skill (~/.agents/skills) and adds the MCP server to ~/.cursor/mcp.json.',
+    'codex           installs the skill (~/.agents/skills) and adds the MCP server to ~/.codex/config.toml.',
     'agents-md       adds the guide to ./AGENTS.md (read by many coding agents).',
     'Existing files are backed up to .bak, and re-running replaces our entry instead of duplicating it.',
     'Without --budget, paid MCP tools need yes or maxCredits on every call.',
@@ -174,10 +271,19 @@ export const setupCommand = defineCommand({
       steps.push({ what, path, result: input.print ? 'would write' : writeWithBackup(path, content) })
     }
     const read = (path: string) => (existsSync(path) ? readFileSync(path, 'utf8') : '')
+    const installSkill = async (target: SkillTarget) => {
+      const folder = skillsFolder(homeDir(ctx.env), target)
+      if (input.print) {
+        steps.push({ what: 'skill', path: join(folder, SKILL_NAME), result: 'would write' })
+        return
+      }
+      const written = writeSkill(folder, await skillFiles(), VERSION)
+      steps.push({ what: 'skill', path: written.dir, result: written.result })
+    }
 
     switch (input.client) {
       case 'claude-code': {
-        write('skill', skillPath(ctx, false, undefined), skillMarkdown())
+        await installSkill('claude')
         const add = ['mcp', 'add', '--scope', 'user', SKILL_NAME, '--', command, ...args]
         const shown = `claude ${add.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}`
         if (input.print) {
@@ -201,6 +307,7 @@ export const setupCommand = defineCommand({
         break
       }
       case 'cursor': {
+        await installSkill('agents')
         const path = join(homeDir(ctx.env), '.cursor', 'mcp.json')
         write('mcp server', path, mergeMcpJson(read(path), command, args))
         break
@@ -209,13 +316,12 @@ export const setupCommand = defineCommand({
         const config = join(homeDir(ctx.env), '.codex', 'config.toml')
         const toml = [`[mcp_servers.${SKILL_NAME}]`, `command = ${JSON.stringify(command)}`, `args = [${args.map((a) => JSON.stringify(a)).join(', ')}]`].join('\n')
         write('mcp server', config, withMarkedBlock(read(config), toml, hash))
-        const agents = join(homeDir(ctx.env), '.codex', 'AGENTS.md')
-        write('guide', agents, withMarkedBlock(read(agents), skillMarkdown().replace(/^---[\s\S]*?---\n/, ''), html))
+        await installSkill('agents')
         break
       }
       case 'agents-md': {
         const path = join(ctx.cwd, 'AGENTS.md')
-        write('guide', path, withMarkedBlock(read(path), skillMarkdown().replace(/^---[\s\S]*?---\n/, ''), html))
+        write('guide', path, withMarkedBlock(read(path), guideText(), html))
         break
       }
     }
@@ -225,4 +331,4 @@ export const setupCommand = defineCommand({
     [`Setting up ${r.client}:`, ...r.steps.map((s) => `  ${s.what.padEnd(11)} ${s.result}${s.path ? `  ${s.path}` : ''}${s.command ? `\n              ${s.command}` : ''}`)].join('\n'),
 })
 
-export const integrationCommands = [skillInstall, skillUninstall, skillShow, setupCommand]
+export const integrationCommands = [skillInstall, skillUninstall, skillStatus, skillShow, setupCommand]

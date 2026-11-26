@@ -2,6 +2,7 @@
 import { COMMANDS, GROUPS, INTRO } from './commands'
 import { runProgram } from './core/program'
 import { cleanupOldBinaries, isCompiledBinary } from './upgrade'
+import { refreshInstalledSkills } from './skill/bundle'
 import { maybeNotifyUpdate } from './update-notice'
 
 // A Windows self-update leaves the previous executable beside the new one.
@@ -35,5 +36,7 @@ void (async () => {
   const args = process.argv.slice(2)
   const code = await runProgram(args, { commands: COMMANDS, groups: GROUPS, intro: INTRO, signal: controller.signal })
   if (args[0] !== 'mcp' && args[0] !== 'upgrade') await maybeNotifyUpdate()
+  // After an upgrade by any route, bring installed copies of the agent skill up to this version.
+  if (isCompiledBinary() && args[0] !== 'skill') await refreshInstalledSkills()
   process.exitCode = code
 })()

@@ -134,7 +134,16 @@ export function fieldsOf(command: AnyCommand): FieldInfo[] {
 }
 
 export function kebab(key: string): string {
-  return key.replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/([A-Z])([A-Z][a-z])/g, '$1-$2').toLowerCase()
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replace(/([A-Z])([A-Z][a-z])/g, '$1-$2')
+    .replace(/([a-z])([0-9])/g, '$1-$2') // for3d → --for-3d
+    .toLowerCase()
+}
+
+/** A command's MCP tool name: `asset list` → `asset_list`. */
+export function toolName(command: AnyCommand): string {
+  return command.path.join('_').replace(/-/g, '_')
 }
 
 /** JSON Schema of a command's input, as agents and MCP clients see it. */

@@ -12,6 +12,7 @@ import {
   RIG_SPECS,
   RIG_TYPES,
   SEGMENT_GRANULARITIES,
+  TEXTURE_VIEW_SLOTS,
   textureReferenceEditRequest,
   toBase64,
   UV_ORIENTATIONS,
@@ -19,6 +20,7 @@ import {
   type MeshFormat,
   type RefineInput,
   type RefineToolId,
+  type TextureViewSlot,
   type ZettaClient,
 } from '@zetta3d/sdk'
 import { z } from 'zod'
@@ -114,21 +116,21 @@ const pick = <T extends Record<string, unknown>>(value: T) => Object.fromEntries
 export const refineRetopo = defineCommand({
   path: ['refine', 'retopo'],
   summary: 'Rebuild a model’s topology to a clean, lower polygon count.',
-  description: 'Engine r1 (default) takes an exact --faces budget; n1 takes a --face-level.',
+  description: 'Runs on Zetta R1 to an exact --faces budget: 500–20,000 triangles, or 500–10,000 with --quads (default 8,000).',
   kind: 'spend',
   positionals: [{ name: 'source', required: true }],
   input: z.object({
     ...common,
-    engine: z.enum(['r1', 'n1']).optional().describe('Retopology engine (default r1).'),
-    faces: z.number().int().positive().optional().describe('Target faces (r1): 500–20,000 triangles or 500–10,000 quads. Default 8,000.'),
-    faceLevel: z.enum(['low', 'medium', 'high']).optional().describe('Density (n1).'),
+    faces: z.number().int().positive().optional().describe('Target faces: 500–20,000 triangles or 500–10,000 quads. Default 8,000.'),
     quads: z.boolean().optional().describe('Quad topology.'),
-    bake: z.boolean().optional().describe('Bake the original detail into the new model’s textures.'),
+    bake: z.boolean().optional().describe('Carry the textures onto the new mesh (default on; --no-bake for bare geometry).'),
+    unwrapUvs: z.boolean().optional().describe('Unwrap fresh UVs in the same job, at no extra cost (replaces the UV layout).'),
     part: z.array(z.string()).optional().describe('Only these named parts of a segmented model.'),
   }),
-  examples: ['zetta refine retopo 1234 --faces 5000 --quads --yes --wait', 'zetta refine retopo ./scan.glb --engine n1 --face-level low --dry-run'],
+  negatable: ['bake'],
+  examples: ['zetta refine retopo 1234 --faces 5000 --quads --yes --wait', 'zetta refine retopo ./scan.glb --faces 2000 --unwrap-uvs --dry-run'],
   async run(ctx, input) {
-    return runRefine(ctx, 'retopo', input, pick({ engine: input.engine, faces: input.faces, faceLevel: input.faceLevel, polygonType: input.quads ? 'quad' : undefined, bake: input.bake, partNames: input.part }))
+    return runRefine(ctx, 'retopo', input, pick({ faces: input.faces, polygonType: input.quads ? 'quad' : undefined, bake: input.bake, unwrapUvs: input.unwrapUvs, partNames: input.part }))
   },
   text: renderJob,
 })
@@ -160,8 +162,8 @@ export const refineUv = defineCommand({
   positionals: [{ name: 'source', required: true }],
   input: z.object({
     ...common,
-    bake: z.boolean().optional().describe('Bake the existing texture onto the new UVs.'),
-    orientation: z.enum(UV_ORIENTATIONS).optional().describe('Which way the model faces in the export.'),
+    bake: z.boolean().optional().describe('Re-bake the existing texture onto the new UVs (off by default: bare UVs).'),
+    orientation: z.enum(UV_ORIENTATIONS).optional().describe('Which way the model faces in the export (default as-is).'),
     compress: z.boolean().optional().describe('Compress geometry.'),
   }),
   async run(ctx, input) {
@@ -172,9 +174,9 @@ export const refineUv = defineCommand({
 
 export const refineTexture = defineCommand({
   path: ['refine', 'texture'],
-  summary: 'Repaint a model’s texture from a reference picture or a description.',
+  summary: 'Repaint a model’s texture from a reference picture, several views, or a description.',
   description: [
-    'Give --reference (a picture of the look you want), --prompt (a description), or both.',
+    'Give --reference (a picture of the look you want), --prompt (a description), or both; or reference pictures of several sides with --view.',
     'A description is turned into a reference picture first (needs image editing on your plan).',
   ].join('\n'),
   kind: 'spend',
@@ -182,30 +184,43 @@ export const refineTexture = defineCommand({
   input: z.object({
     ...common,
     reference: z.string().optional().describe('Reference picture: a file, URL or image:<id>.'),
+    view: z.array(z.string()).optional().describe('Reference views as side=picture instead of --reference: front (required), back, left, right.'),
     prompt: z.string().max(2000).optional().describe('Describe the look, e.g. "weathered bronze with green patina".'),
-    tier: z.enum(['standard', 'hd', '8k']).optional().describe('Texture resolution tier.'),
-    alignment: z.enum(['image', 'geometry']).optional().describe('Follow the picture or the mesh.'),
-    pbr: z.boolean().optional().describe('PBR materials.'),
-    bake: z.boolean().optional().describe('Bake lighting effects into the base texture.'),
-    fast: z.boolean().optional().describe('Faster standard tier.'),
-    delight: z.boolean().optional().describe('Remove lighting from the reference first.'),
-    removeBg: z.boolean().optional().describe('Remove the reference picture’s background first.'),
+    tier: z.enum(['standard', 'hd', '8k']).optional().describe('Texture resolution: standard (2K), hd (4K) or 8k. Each has its own price.'),
+    alignment: z.enum(['image', 'geometry']).optional().describe('Follow the picture (default) or the mesh.'),
+    pbr: z.boolean().optional().describe('PBR materials (default on; free on a retexture).'),
+    bake: z.boolean().optional().describe('Bake material effects into the base texture (default on).'),
+    fast: z.boolean().optional().describe('Faster setting of the standard tier.'),
+    delight: z.boolean().optional().describe('Remove lighting baked into the reference first (default on).'),
+    removeBg: z.boolean().optional().describe('Remove the reference pictures’ backgrounds first.'),
     part: z.array(z.string()).optional().describe('Only these named parts.'),
     seed: z.number().int().optional().describe('Texture seed.'),
   }),
-  negatable: ['pbr'],
-  examples: ['zetta refine texture 1234 --reference oak.jpg --tier hd --yes', 'zetta refine texture 1234 --prompt "brushed steel" --dry-run'],
+  negatable: ['pbr', 'bake', 'delight'],
+  examples: [
+    'zetta refine texture 1234 --reference oak.jpg --tier hd --yes',
+    'zetta refine texture 1234 --prompt "brushed steel" --dry-run',
+    'zetta refine texture 1234 --view front=f.png --view back=b.png --dry-run',
+  ],
   async run(ctx, input) {
-    if (!input.reference && !input.prompt) throw usageError('Give --reference <picture> or --prompt <description>.')
+    const views = parseTextureViews(input.view)
+    if (views && (input.reference || input.prompt)) throw usageError('Use --view, or --reference/--prompt, not both.')
+    if (!views && !input.reference && !input.prompt) throw usageError('Give --reference <picture>, --prompt <description> or --view side=<picture>.')
+    if (views) {
+      const placeholders = Object.fromEntries(Object.keys(views).map((side) => [side, 'https://placeholder.invalid/view.png']))
+      return runRefine(ctx, 'texture', input, pick({ ...textureSettings(input), views: placeholders }), {
+        prepareOptions: async () => {
+          const client = await ctx.client()
+          const resolved: Partial<Record<TextureViewSlot, string>> = {}
+          for (const [side, source] of Object.entries(views) as Array<[TextureViewSlot, string]>) {
+            resolved[side] = (await resolvePicture(ctx, client, source, { removeBackground: Boolean(input.removeBg), label: `the ${side} view` })).url
+          }
+          return { views: resolved }
+        },
+      })
+    }
     const options = pick({
-      tier: input.tier,
-      textureAlignment: input.alignment === 'image' ? 'original_image' : input.alignment,
-      enablePBR: input.pbr,
-      bake: input.bake,
-      textureFast: input.fast,
-      delight: input.delight,
-      partNames: input.part,
-      textureSeed: input.seed,
+      ...textureSettings(input),
       imageUrl: 'https://placeholder.invalid/reference.png',
     })
     return runRefine(ctx, 'texture', input, options, {
@@ -225,6 +240,45 @@ export const refineTexture = defineCommand({
   },
   text: renderJob,
 })
+
+interface TextureFlags {
+  tier?: string
+  alignment?: 'image' | 'geometry'
+  pbr?: boolean
+  bake?: boolean
+  fast?: boolean
+  delight?: boolean
+  part?: string[]
+  seed?: number
+}
+
+function textureSettings(input: TextureFlags): Record<string, unknown> {
+  return {
+    tier: input.tier,
+    textureAlignment: input.alignment === 'image' ? 'original_image' : input.alignment,
+    enablePBR: input.pbr,
+    bake: input.bake,
+    textureFast: input.fast,
+    delight: input.delight,
+    partNames: input.part,
+    textureSeed: input.seed,
+  }
+}
+
+function parseTextureViews(values: string[] | undefined): Partial<Record<TextureViewSlot, string>> | undefined {
+  if (!values?.length) return undefined
+  const views: Partial<Record<TextureViewSlot, string>> = {}
+  for (const value of values) {
+    const at = value.indexOf('=')
+    const side = (at > 0 ? value.slice(0, at) : '').trim().toLowerCase() as TextureViewSlot
+    const source = at > 0 ? value.slice(at + 1).trim() : ''
+    if (!TEXTURE_VIEW_SLOTS.includes(side) || !source) {
+      throw usageError(`--view "${value}" should look like front=./front.png (sides: ${TEXTURE_VIEW_SLOTS.join(', ')}).`)
+    }
+    views[side] = source
+  }
+  return views
+}
 
 async function referenceSource(value: string): Promise<{ data: string; contentType: string } | { sourcePostId: number }> {
   const library = /^image:(\d+)$/.exec(value)?.[1]
@@ -249,16 +303,19 @@ async function thumbnailSource(client: ZettaClient, source: string): Promise<{ d
 export const refineRig = defineCommand({
   path: ['refine', 'rig'],
   summary: 'Add a skeleton so the model can be animated.',
-  description: 'Not sure which --rig-type? Run `zetta asset rig-check <id>` first. --rig-spec mixamo names bones for Mixamo animations.',
+  description: [
+    'Not sure which --rig-type? Run `zetta asset rig-check <id>` first; others is for a creature none of the named bodies describe.',
+    'A humanoid (biped) can be written in another skeleton naming with --rig-spec: mixamo, unity (Humanoid), unreal (UE5 Mannequin), vrm (VRM 1.0) or actorcore.',
+  ].join('\n'),
   kind: 'spend',
   positionals: [{ name: 'source', required: true }],
   input: z.object({
     ...common,
-    rigType: z.enum(RIG_TYPES).optional().describe('Body plan (default biped).'),
-    rigSpec: z.enum(RIG_SPECS).optional().describe('Bone naming (default standard).'),
+    rigType: z.enum(RIG_TYPES).optional().describe(`Body plan: ${RIG_TYPES.join(', ')} (default biped).`),
+    rigSpec: z.enum(RIG_SPECS).optional().describe(`Skeleton naming for a biped: ${RIG_SPECS.join(', ')} (default standard).`),
     rigFormat: z.enum(RIG_OUT_FORMATS).optional().describe('File format of the rigged model (default glb).'),
   }),
-  examples: ['zetta refine rig 1234 --rig-type quadruped --rig-format fbx --yes --out .'],
+  examples: ['zetta refine rig 1234 --rig-type quadruped --rig-format fbx --yes --out .', 'zetta refine rig 1234 --rig-spec unreal --dry-run'],
   async run(ctx, input) {
     return runRefine(ctx, 'rig', input, pick({ rigType: input.rigType, rigSpec: input.rigSpec, rigOutFormat: input.rigFormat }))
   },
@@ -276,7 +333,7 @@ export const refineConvert = defineCommand({
     to: z.string().describe(`Target format: ${CONVERT_FORMATS.join(', ')} (any case).`),
     quad: z.boolean().optional().describe('Quad topology.'),
     symmetry: z.boolean().optional().describe('Force symmetry.'),
-    faces: z.number().int().positive().optional().describe('Face limit.'),
+    faces: z.number().int().positive().optional().describe('Face limit: 1,000–1,000,000, or up to 150,000 with --quad.'),
     flattenBottom: z.boolean().optional().describe('Flatten the base (for printing or placing).'),
     flattenThreshold: z.number().optional().describe('How much of the base to flatten.'),
     textureSize: z.number().int().min(128).max(4096).optional().describe('Texture size in pixels (128–4096).'),

@@ -27,11 +27,26 @@ export type BuildResult<T> =
   | { ok: false; problems: Problem[] }
 
 /** Every engine id the server knows. Ours, never a supplier's. */
-export const GEN_MODELS = ['n1', 'n25', 'np1', 'np15', 'r1', 'zs2', 'zs21'] as const
+export const GEN_MODELS = ['n25', 'np1', 'np15', 'r1', 'zs2', 'zs21'] as const
 export type GenModel = (typeof GEN_MODELS)[number]
 
-/** What a request that names no model gets on the server. */
-export const DEFAULT_GEN_MODEL: GenModel = 'n1'
+/** What a request that names no model gets on the server: Zetta N2.5 since N1 was retired. */
+export const DEFAULT_GEN_MODEL: GenModel = 'n25'
+
+/**
+ * Engines that no longer exist, and what a request naming one is told. The server refuses them by
+ * name (400) and charges nothing; the builders refuse them first with the same sentence.
+ */
+export const RETIRED_MODELS: Readonly<Record<string, string>> = {
+  n1: 'Zetta N1 has been retired. Use Zetta N2.5 or Np1.',
+  n2: 'Zetta N2 has been retired. Use Zetta N2.5 or Np1.',
+}
+
+/** The retirement sentence for an engine id, or `null` when it is not a retired one. */
+export function retiredModelMessage(value: unknown): string | null {
+  const id = typeof value === 'string' ? value.trim().toLowerCase().replace('zetta ', '') : ''
+  return RETIRED_MODELS[id] ?? null
+}
 
 /** The server's priced operation codes (`ThreeDOperation`). */
 export const OPERATIONS = {
@@ -83,9 +98,13 @@ export const VIEW_TYPES = [
 ] as const
 export type ViewType = (typeof VIEW_TYPES)[number]
 
-export const RIG_TYPES = ['biped', 'quadruped', 'hexapod', 'octopod', 'avian', 'serpentine', 'aquatic'] as const
+/** `others` is for a body none of the named plans describe. */
+export const RIG_TYPES = ['biped', 'quadruped', 'hexapod', 'octopod', 'avian', 'serpentine', 'aquatic', 'others'] as const
 export type RigType = (typeof RIG_TYPES)[number]
-export const RIG_SPECS = ['standard', 'mixamo'] as const
+/** The one body a skeleton naming applies to. */
+export const HUMANOID_RIG_TYPE: RigType = 'biped'
+/** Whose bone naming a humanoid rig is written in. `standard` is the rigger's own. */
+export const RIG_SPECS = ['standard', 'mixamo', 'unity', 'unreal', 'vrm', 'actorcore'] as const
 export type RigSpec = (typeof RIG_SPECS)[number]
 export const RIG_OUT_FORMATS = ['glb', 'fbx'] as const
 export type RigOutFormat = (typeof RIG_OUT_FORMATS)[number]
@@ -134,7 +153,8 @@ export interface CreateGenerationRequest {
   // geometry
   faceCount?: number
   polygonType?: 'triangle' | 'quadrilateral'
-  generationType?: 'Normal' | 'LowPoly' | 'Geometry' | 'Sketch'
+  /** `Geometry` is the untextured low-poly mode. */
+  generationType?: 'Normal' | 'LowPoly' | 'Geometry'
   // engine tuning
   autoSize?: boolean
   textureAlignment?: 'original_image' | 'geometry'
@@ -151,7 +171,10 @@ export interface CreateGenerationRequest {
   bake?: boolean
   enablePBR?: boolean
   partNames?: string[]
+  /** Still accepted by the server, but it was the retired Zetta N1's retopology control; never sent. */
   faceLevel?: 'low' | 'medium' | 'high'
+  /** Retopology on Zetta R1: unwrap UVs in the same job. Sent only as `true`. */
+  unwrapUvs?: boolean
   segmentGranularity?: 'simple' | 'balanced' | 'detailed'
   splitByConnectivity?: boolean
   rigType?: RigType
@@ -188,7 +211,10 @@ export const MAX_TITLE_LENGTH = 255
 export const MAX_TAGS = 20
 export const MAX_TAG_LENGTH = 64
 export const MAX_ORIGIN_LENGTH = 64
-/** Where a CLI request says it came from, unless the caller names something else. */
+/**
+ * Where a CLI request says it came from, unless the caller names something else. The server's usage
+ * report counts an origin matching /^(cli|sdk|mcp|cli-mcp)\b/ as the CLI, so keep that prefix.
+ */
 export const DEFAULT_ORIGIN = 'cli'
 
 /** Numbers as the server prints them in its messages: `1,000,000`. */
@@ -312,7 +338,7 @@ export interface FaceRange {
   max: number
 }
 
-/** Zetta N1's range, and the fallback for an engine with no table of its own. */
+/** The server's fallback for an engine with no table of its own. No live engine uses it. */
 export const SHARED_FACE_LIMITS: FaceRange = { min: 3_100, max: 1_500_000 }
 export const R1_FACE_LIMITS = {
   triangle: { min: 500, max: 20_000 },
@@ -332,7 +358,8 @@ export const N25_FACE_LIMITS = {
 
 /**
  * The polygon count the server accepts for a job, read the way the server reads it: from the
- * model, the paid base and modifiers, and the topology.
+ * model, the paid base and modifiers, and the topology. A job that names no model is read as
+ * `DEFAULT_GEN_MODEL` (N2.5), which is also what bounds a conversion's polygon limit.
  */
 export function faceLimitsFor(
   model: string,
@@ -344,6 +371,7 @@ export function faceLimitsFor(
   if (model === 'np1') return NP1_FACE_LIMITS
   if (model === 'np15') return quad ? NP15_FACE_LIMITS.quad : NP15_FACE_LIMITS.triangle
   if (model === 'r1') return quad ? R1_FACE_LIMITS.quad : R1_FACE_LIMITS.triangle
+  // N2.5 is the one engine with rungs; anything else falls back as the server's table does.
   if (model !== 'n25') return SHARED_FACE_LIMITS
   const rung =
     base === OPERATIONS.LOWPOLY

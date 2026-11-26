@@ -72,7 +72,29 @@ export interface PipelineRun {
   [key: string]: unknown
 }
 
-export type RunSeed = { uploadKey: string; name?: string } | { gen2dPostId: number } | { gen3dPostId: number }
+/** One picture of a multi-view seed: which side (`front` is required in each seed), and where it is. */
+export type RunSeedView =
+  | { viewType: 'front' | 'back' | 'left' | 'right'; uploadKey: string; name?: string }
+  | { viewType: 'front' | 'back' | 'left' | 'right'; gen2dPostId: number; name?: string }
+
+/**
+ * What one run of a batch starts from — the seed step's request: an upload, an Image library picture,
+ * a 3D library model, or (a Multi-view seed) pictures of each side, the front at least.
+ */
+export type RunSeed =
+  | { uploadKey: string; name?: string }
+  | { gen2dPostId: number }
+  | { gen3dPostId: number }
+  | { views: RunSeedView[]; name?: string }
+
+/** A recipe an AI drafted (`POST /pipelines/draft`): nothing is saved. */
+export interface PipelineDraftResult {
+  title: string
+  /** One line on what it made, or what it changed. */
+  summary: string
+  /** Laid out; each step names only the settings it changes, and has no request yet. */
+  graph: GraphPayload
+}
 
 export interface RunWaitOptions {
   intervalMs?: number
@@ -110,6 +132,14 @@ export class Pipelines {
     return this.transport.request('POST', `/pipelines/${id}/duplicate`, { retry: 'never' })
   }
 
+  /**
+   * An AI drafts a recipe from a description (3–2,000 characters) — or, given `graph`, changes that
+   * recipe as asked. Nothing is saved. Needs a paid plan, charges AI tokens, ten a minute.
+   */
+  draft(input: { description: string; graph?: GraphPayload }): Promise<PipelineDraftResult> {
+    return this.transport.request('POST', '/pipelines/draft', { body: input, retry: 'never' })
+  }
+
   /** Prices a graph and lists its problems, without saving or running anything. */
   estimate(graph: GraphPayload): Promise<PipelineEstimate> {
     return this.transport.request('POST', '/pipelines/estimate', { body: { graph } })
@@ -119,12 +149,19 @@ export class Pipelines {
     return this.transport.request('GET', `/pipelines/${pipelineId}/runs`)
   }
 
-  /** Starts one run on the pipeline's own seed. Passing `graph` saves it first. */
+  /**
+   * Starts one run on the pipeline's own seed. Passing `graph` saves it first — which an API key may not
+   * do (403 `PIPELINE_EDIT_NOT_ALLOWED`); without it the run copies the pipeline as saved.
+   */
   startRun(pipelineId: number, input: { mode: RunMode; graph?: GraphPayload }): Promise<PipelineRun> {
     return this.transport.request('POST', `/pipelines/${pipelineId}/runs`, { body: input, retry: 'never' })
   }
 
-  /** One run per seed (1–20). `draft: true` creates runs that wait for per-run input before starting. */
+  /**
+   * One run per seed (1–20). `draft: true` creates runs that wait for per-run input before starting.
+   * Leave `graph` out to run the pipeline as saved; sending one saves it first, which an API key may not
+   * do (403 `PIPELINE_EDIT_NOT_ALLOWED`).
+   */
   batch(
     pipelineId: number,
     input: { mode: RunMode; seeds: RunSeed[]; graph?: GraphPayload; draft?: boolean },

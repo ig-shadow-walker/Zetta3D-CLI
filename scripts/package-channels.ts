@@ -59,6 +59,14 @@ ${blocks.macos.length ? `\n  on_macos do\n${blocks.macos.join('\n')}\n  end\n` :
     bin.install binary => "zetta"
   end
 
+  # Teaches the AI coding agents found here (Claude Code, Codex, Cursor) to use zetta.
+  # Skipped with ZETTA_NO_SKILL=1 or after "zetta skill uninstall"; never fails the install.
+  def post_install
+    system bin/"zetta", "skill", "install", "--auto", "--output", "text"
+  rescue StandardError
+    nil
+  end
+
   test do
     assert_match version.to_s, shell_output("#{bin}/zetta --version")
   end
@@ -126,6 +134,7 @@ writeFileSync(
       description: 'Zetta 3D from the terminal: 3D models from text or pictures, for people and AI agents.',
       homepage: 'https://zetta3d.ai',
       bin: { zetta: 'bin/zetta.js' },
+      scripts: { postinstall: 'node bin/postinstall.js' },
       files: ['bin', 'README.md'],
       engines: { node: '>=18' },
       optionalDependencies: optional,
@@ -171,6 +180,18 @@ process.exit(result.status ?? 1)
 `,
 )
 chmodSync(join(main, 'bin', 'zetta.js'), 0o755)
+writeFileSync(
+  join(main, 'bin', 'postinstall.js'),
+  `// Teaches the AI coding agents found here (Claude Code, Codex, Cursor) to use zetta: installs the
+// Zetta 3D skill for them. Skipped with ZETTA_NO_SKILL=1 or after \`zetta skill uninstall\`.
+// Never fails the npm install.
+'use strict'
+if (process.env.ZETTA_NO_SKILL === '1' || process.env.CI === 'true') process.exit(0)
+try {
+  require('node:child_process').spawnSync(process.execPath, [require('node:path').join(__dirname, 'zetta.js'), 'skill', 'install', '--auto'], { stdio: 'ignore', timeout: 30000 })
+} catch {}
+`,
+)
 writeFileSync(
   join(main, 'README.md'),
   `# @zetta3d/cli\n\nZetta 3D from the terminal. \`npx @zetta3d/cli --help\`, or \`npm i -g @zetta3d/cli\` then \`zetta --help\`.\n\nThe recommended install needs no Node at all: \`curl -fsSL https://zetta3d.ai/install.sh | sh\`. See https://zetta3d.ai for documentation.\n`,

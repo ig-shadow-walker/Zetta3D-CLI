@@ -1,6 +1,6 @@
 import { LocalErrorCodes, ZettaError, errorFromResponse } from './errors'
 import type { Transport } from './transport'
-import type { Generation, UploadTicket } from './types'
+import type { Generation, ResultUploadTicket, UploadTicket } from './types'
 
 /** Files up to this size go up in one PUT; larger ones use the relay's multipart routes. */
 export const UPLOAD_PIECE_BYTES = 8 * 1024 * 1024
@@ -12,6 +12,8 @@ export const UPLOAD_CONTENT_TYPES = [
   'image/jpeg',
   'image/webp',
   'model/gltf-binary',
+  // Only with an `extension`: a model that is not a GLB (`stl`, `fbx`, `zip`, …).
+  'application/octet-stream',
   'video/mp4',
   'video/webm',
   'video/quicktime',
@@ -32,6 +34,11 @@ export interface UploadProgress {
 
 export interface UploadOptions {
   contentType: string
+  /**
+   * A model that is not a GLB (`stl`, `fbx`, `zip`, …) goes up as `application/octet-stream` with its
+   * extension, so the stored key ends in what the file is. See `modelUploadType`.
+   */
+  extension?: string
   signal?: AbortSignal
   onProgress?: (progress: UploadProgress) => void
 }
@@ -47,11 +54,39 @@ export interface UploadedFile {
 
 export interface RegisterUploadInput {
   key: string
+  /** At most 512 MiB. */
   bytes: number
+  /** At most 120 characters. */
   title?: string
+  /** `upload` (the default): a model you brought. `autoRigging`: a rig you made yourself from `sourcePostId`. */
   feature?: 'upload' | 'autoRigging'
+  /** The library item this model was made from (must be yours). */
   sourcePostId?: number
 }
+
+export interface ReplaceResultOptions {
+  /** Which part of a segmented item, counting from 0 in part order. Omit for a single model. */
+  part?: number
+  /** Which stored file to replace: the GLB (default) or the item's one FBX (a rig, a retopology). */
+  format?: 'glb' | 'fbx'
+  /**
+   * The storage key you expect to overwrite. When given, the server's answer is checked first and
+   * nothing is sent if it names a different file.
+   */
+  expectedKey?: string
+  signal?: AbortSignal
+  onProgress?: (progress: UploadProgress) => void
+}
+
+export interface ReplacedResult {
+  /** The storage key that now holds the new bytes. */
+  key: string
+  bytes: number
+  format: 'glb' | 'fbx'
+}
+
+/** The largest model file the relay stores (an upload, or a replaced result). */
+export const MODEL_MAX_BYTES = 512 * 1024 * 1024
 
 type Sent = { status: number; body: string; retryAfter: string | null }
 
@@ -62,12 +97,15 @@ export class Uploads {
     private readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
   ) {}
 
-  /** Asks for an upload ticket: where to send the bytes, and the URL engines will read them from. */
-  createTicket(contentType: string): Promise<UploadTicket> {
-    return this.transport.request<UploadTicket>('POST', '/3d/uploads', { body: { contentType } })
+  /**
+   * Asks for an upload ticket: where to send the bytes, and the URL engines will read them from.
+   * A model that is not a GLB is sent as `application/octet-stream` with its `extension`.
+   */
+  createTicket(contentType: string, extension?: string): Promise<UploadTicket> {
+    return this.transport.request<UploadTicket>('POST', '/3d/uploads', { body: extension ? { contentType, extension } : { contentType } })
   }
 
-  /** Registers an uploaded GLB as a library item (free). */
+  /** Registers an uploaded model (any importable format, or a zip) as a library item (free). */
   async register(input: RegisterUploadInput): Promise<Generation> {
     const result = await this.transport.request<{ generation: Generation }>('POST', '/3d/uploads/post', {
       body: input,
@@ -82,15 +120,64 @@ export class Uploads {
    * An expired ticket is replaced once; network errors and 5xx are retried per request.
    */
   async upload(blob: Blob, options: UploadOptions): Promise<UploadedFile> {
-    let ticket = await this.createTicket(options.contentType)
+    let ticket = await this.createTicket(options.contentType, options.extension)
     try {
       await this.send(ticket, blob, options)
     } catch (error) {
       if (!(error instanceof ZettaError) || error.code !== LocalErrorCodes.UPLOAD_TICKET_EXPIRED) throw error
-      ticket = await this.createTicket(options.contentType)
+      ticket = await this.createTicket(options.contentType, options.extension)
       await this.send(ticket, blob, options)
     }
     return { key: ticket.key, fileUrl: ticket.fileUrl, bytes: blob.size, contentType: options.contentType }
+  }
+
+  /**
+   * Overwrites one of a library item's own model files with new bytes — the web Studio's "Save"
+   * (an edited material, maps applied in the inspector, an AI edit saved back).
+   *
+   * `POST /3d/generations/:id/result-upload` names the file (you name the item, the part and the
+   * format, never a key), then the bytes go through the relay like any upload. The old file is
+   * gone afterwards: there is no undo. An expired ticket is replaced once.
+   */
+  async replaceResult(generationId: number, blob: Blob, options: ReplaceResultOptions = {}): Promise<ReplacedResult> {
+    const format = options.format ?? 'glb'
+    if (blob.size > MODEL_MAX_BYTES) {
+      throw new ZettaError({
+        code: LocalErrorCodes.FILE_TOO_LARGE,
+        message: `The file is ${Math.round(blob.size / 1024 / 1024)} MB; the limit is 512 MB.`,
+        details: { bytes: blob.size, limit: MODEL_MAX_BYTES },
+      })
+    }
+    const body: { part?: number; format?: 'glb' | 'fbx' } = {
+      ...(options.part !== undefined ? { part: options.part } : {}),
+      ...(options.format ? { format: options.format } : {}),
+    }
+    const ticketFor = async (): Promise<ResultUploadTicket> => {
+      const ticket = await this.transport.request<ResultUploadTicket>('POST', `/3d/generations/${generationId}/result-upload`, { body, retry: 'never' })
+      if (options.expectedKey && ticket.key !== options.expectedKey) {
+        throw new ZettaError({
+          code: 'CONFLICT',
+          message: `#${generationId} could not be saved: the server offered a different file than expected. Nothing was written.`,
+          status: 409,
+          details: { expected: options.expectedKey, offered: ticket.key },
+        })
+      }
+      return ticket
+    }
+    const sendOptions: UploadOptions = {
+      contentType: format === 'fbx' ? 'application/octet-stream' : 'model/gltf-binary',
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+    }
+    let ticket = await ticketFor()
+    try {
+      await this.send(ticket, blob, sendOptions)
+    } catch (error) {
+      if (!(error instanceof ZettaError) || error.code !== LocalErrorCodes.UPLOAD_TICKET_EXPIRED) throw error
+      ticket = await ticketFor()
+      await this.send(ticket, blob, sendOptions)
+    }
+    return { key: ticket.key, bytes: blob.size, format }
   }
 
   /** Sends bytes to a ticket's `uploadUrl`; exported for callers that manage tickets themselves. */

@@ -4,7 +4,7 @@
  * (`pipeline-graph.ts`) and the web editor's copies (`lib/pipelines.ts`, `node-config.ts`), merged so
  * nothing the server would refuse is missed and nothing the editor allows is refused.
  */
-import { NODE_KINDS, inputPort, isNodeKind, isSeed, outputType } from './catalogue'
+import { NODE_KINDS, inputPort, isMultiViewGenerate, isNodeKind, isSeed, outputType } from './catalogue'
 import { effectiveSettings, settingNotes, withKnownRigSpecRequest } from './settings'
 import { SMART_UV_MAX_TRIANGLES } from './tool-settings'
 import { formatCount } from './generate-form'
@@ -12,6 +12,8 @@ import { incomingType, nodeProblems, withRequests, type NodeContext } from './re
 import {
   PIPELINE_GRAPH_VERSION,
   PIPELINE_LIMITS,
+  VIEW_TYPES,
+  type NodeKind,
   type PipelineEdge,
   type PipelineGraph,
   type PipelineNode,
@@ -39,6 +41,7 @@ export const PROBLEM_CODES = {
   settingInvalid: 'SETTING_INVALID',
   aiEditPromptMissing: 'AI_EDIT_PROMPT_MISSING',
   textureInputMissing: 'TEXTURE_INPUT_MISSING',
+  viewsInputMissing: 'VIEWS_INPUT_MISSING',
   seedsCount: 'SEEDS_COUNT',
   seedInvalid: 'SEED_INVALID',
   serverProblem: 'SERVER_PROBLEM',
@@ -52,6 +55,8 @@ export const WARNING_CODES = {
   rigSpecReplaced: 'RIG_SPEC_REPLACED',
   smartUvTriangles: 'SMART_UV_TRIANGLES',
   noViews: 'NO_VIEWS',
+  /** A step names an engine that was retired (Zetta N1): a generation on it fails; a retopology runs on Zetta R1. */
+  engineRetired: 'ENGINE_RETIRED',
 } as const
 
 /* -------------------------------------------------------------------------- graph helpers */
@@ -141,12 +146,103 @@ export function canConnect(
   return !reaches(graph, connection.target, connection.source)
 }
 
+/** The multi-view step for a one-picture generation, and back. */
+const MULTI_VIEW_OF: Partial<Record<NodeKind, NodeKind>> = {
+  generate_3d: 'generate_3d_multiview',
+  generate_smart_3d: 'generate_smart_3d_multiview',
+}
+const ONE_PICTURE_OF: Partial<Record<NodeKind, NodeKind>> = {
+  generate_3d_multiview: 'generate_3d',
+  generate_smart_3d_multiview: 'generate_smart_3d',
+}
+
 /**
- * Whether a step's input is given on each run rather than kept in the pipeline: AI texturing always
- * (as the editor treats it), AI edit when its `askAtRun` is on.
+ * Why a connection's types do not match, in the server's words: a one-picture generation fed views
+ * names its multi-view step, and the other way round.
+ */
+export function mismatchMessage(kind: string, carries: string, accepts: readonly string[]): string {
+  const label = (of: NodeKind) => NODE_KINDS[of].label
+  const multi = isNodeKind(kind) ? MULTI_VIEW_OF[kind] : undefined
+  const single = isNodeKind(kind) ? ONE_PICTURE_OF[kind] : undefined
+  if (multi && carries === 'views') {
+    return `${label(kind as NodeKind)} takes one picture. For pictures of each side, use ${label(multi)}.`
+  }
+  if (single && carries === 'picture') {
+    return `${label(kind as NodeKind)} takes pictures of each side — connect a Multi-view seed or Draw views, or use ${label(single)} for one picture.`
+  }
+  return `This input takes a ${accepts.join(' or ')}, not a ${carries}.`
+}
+
+/**
+ * A GENERATION FED VIEWS BECOMES ITS MULTI-VIEW STEP — the server's `withMultiViewSteps`, applied when
+ * it reads any graph. A graph made before the multi-view steps existed (Draw views into Generate 3D),
+ * or one still built that way, keeps working: the step becomes the kind that takes what it is given,
+ * with every setting it had. AI texturing in its first multi-view mode (`referenceMode: multi-view`)
+ * becomes Multi-view - AI texturing.
+ */
+export function withMultiViewSteps(graph: PipelineGraph): PipelineGraph {
+  const kinds = new Map(graph.nodes.map((node) => [node.id, node.kind as string]))
+  const fedViews = new Set(
+    graph.edges
+      .filter((edge) => {
+        const source = kinds.get(edge.source)
+        return edge.targetHandle === 'in' && source !== undefined && outputType(source, edge.sourceHandle) === 'views'
+      })
+      .map((edge) => edge.target),
+  )
+  const multiViewTexture = (node: PipelineNode) =>
+    node.kind === 'texture' && (node.request?.referenceMode === 'multi-view' || node.settings?.referenceMode === 'multi-view')
+  if (!fedViews.size && !graph.nodes.some(multiViewTexture)) return graph
+  return {
+    ...graph,
+    nodes: graph.nodes.map((node) => {
+      const multi = fedViews.has(node.id) && isNodeKind(node.kind) ? MULTI_VIEW_OF[node.kind] : undefined
+      if (multi) return { ...node, kind: multi }
+      if (multiViewTexture(node)) return { ...node, kind: 'texture_multiview' as const }
+      return node
+    }),
+  }
+}
+
+/**
+ * Whether a step's input is given on each run rather than kept in the pipeline: AI texturing — one
+ * picture or pictures of each side — always (as the editor treats it), AI edit when its `askAtRun`
+ * is on. `perRunIn` also knows the graph.
  */
 export function setOnEachRun(node: Pick<PipelineNode, 'kind' | 'settings'>): boolean {
-  return node.kind === 'texture' || (node.kind === 'ai_edit' && node.settings?.askAtRun === true)
+  return (
+    node.kind === 'texture' ||
+    node.kind === 'texture_multiview' ||
+    (node.kind === 'ai_edit' && node.settings?.askAtRun === true)
+  )
+}
+
+/** `setOnEachRun`, knowing the graph: Multi-view - AI texturing with views wired in asks nothing of a run. */
+export function perRunIn(graph: PipelineGraph, node: Pick<PipelineNode, 'id' | 'kind' | 'settings'>): boolean {
+  if (node.kind === 'texture_multiview' && graph.edges.some((edge) => edge.target === node.id && edge.targetHandle === 'views')) {
+    return false
+  }
+  return setOnEachRun(node)
+}
+
+/** One picture of a multi-view set as the server reads it (`readViews`): a known side, placed. */
+function readViews(value: unknown): Array<{ viewType: string }> {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const views: Array<{ viewType: string }> = []
+  for (const entry of value as Array<Record<string, unknown> | null>) {
+    const viewType = typeof entry?.viewType === 'string' ? entry.viewType : ''
+    if (!(VIEW_TYPES as readonly string[]).includes(viewType) || seen.has(viewType)) continue
+    if (typeof entry?.uploadKey !== 'string' && typeof entry?.gen2dPostId !== 'number') continue
+    seen.add(viewType)
+    views.push({ viewType })
+  }
+  return views
+}
+
+/** Whether a multi-view set, as the server reads it, has its front. */
+export function hasFront(views: unknown): boolean {
+  return readViews(views).some((view) => view.viewType === 'front')
 }
 
 const text = (value: unknown) => typeof value === 'string' && value.trim() !== ''
@@ -215,11 +311,7 @@ export function validateGraph(graph: PipelineGraph, options: ValidateOptions = {
       continue
     }
     if (!port.accepts.includes(carries)) {
-      problems.push({
-        code: PROBLEM_CODES.portMismatch,
-        nodeId: target.id,
-        message: `This input takes a ${port.accepts.join(' or ')}, not a ${carries}.`,
-      })
+      problems.push({ code: PROBLEM_CODES.portMismatch, nodeId: target.id, message: mismatchMessage(target.kind, carries, port.accepts) })
     }
     const slot = `${edge.target}:${edge.targetHandle}`
     if (filled.has(slot)) {
@@ -264,6 +356,13 @@ export function validateGraph(graph: PipelineGraph, options: ValidateOptions = {
           message: 'Choose the model this pipeline starts from.',
         })
       }
+      if (node.kind === 'seed_views' && !hasFront(request.views)) {
+        problems.push({
+          code: PROBLEM_CODES.seedNotChosen,
+          nodeId: node.id,
+          message: 'Choose the pictures this run starts from — a front one at least.',
+        })
+      }
       continue
     }
     if (node.kind === 'ai_edit' && !setOnEachRun(node) && !text(request.prompt)) {
@@ -289,7 +388,8 @@ export function validateGraph(graph: PipelineGraph, options: ValidateOptions = {
 
 /**
  * WHAT A RUN NEEDS FROM THE USER BEFORE IT CAN START — the server's own rule: AI texturing a
- * description or a reference picture, AI edit an instruction. A draft run is made without them; its
+ * description or a reference picture, Multi-view - AI texturing its pictures of each side (unless
+ * views are wired in), AI edit an instruction. A draft run is made without them; its
  * Start is refused (`RUN_NEEDS_INPUT`) until each is given.
  */
 export function runInputProblems(graph: PipelineGraph): Problem[] {
@@ -321,6 +421,17 @@ export function runInputProblems(graph: PipelineGraph): Problem[] {
         })
       }
     }
+    if (node.kind === 'texture_multiview') {
+      const wired = built.edges.some((edge) => edge.target === node.id && edge.targetHandle === 'views')
+      if (!wired && !hasFront(request.referenceViews)) {
+        problems.push({
+          code: PROBLEM_CODES.viewsInputMissing,
+          nodeId: node.id,
+          field: 'views',
+          message: `${node.label || 'Multi-view - AI texturing'}: add the pictures of each side — a front one at least.`,
+        })
+      }
+    }
   }
   return problems
 }
@@ -339,7 +450,7 @@ function polygonBudgetBefore(graph: PipelineGraph, nodeId: string): { from: stri
       if (settings.engine !== 'r1' || typeof settings.faces !== 'number') return null
       return { from: label, triangles: settings.faces * (settings.polygonType === 'quadrilateral' ? 2 : 1) }
     }
-    if (source.kind === 'generate_3d' || source.kind === 'generate_smart_3d') {
+    if (source.kind === 'generate_3d' || source.kind === 'generate_smart_3d' || isMultiViewGenerate(source.kind)) {
       const count = Number(settings.polygonCount)
       if (!Number.isFinite(count) || count <= 0) return null
       return { from: label, triangles: count * (settings.polygonType === 'quadrilateral' ? 2 : 1) }
@@ -390,6 +501,23 @@ export function graphWarnings(graph: PipelineGraph): Problem[] {
         })
       }
     }
+    const settings = node.settings
+    if ((node.kind === 'generate_3d' || node.kind === 'generate_3d_multiview') && (settings ? settings.model : node.request?.model) === 'n1') {
+      warnings.push({
+        code: WARNING_CODES.engineRetired,
+        nodeId: node.id,
+        field: 'engine',
+        message: 'Zetta N1 has been retired: the server refuses it, so this step fails when it runs. Use engine n25.',
+      })
+    }
+    if (node.kind === 'retopology' && (settings ? settings.engine : node.request?.model) === 'n1') {
+      warnings.push({
+        code: WARNING_CODES.engineRetired,
+        nodeId: node.id,
+        field: 'engine',
+        message: 'Zetta N1 has been retired: this step runs on Zetta R1, to its polygon count (faces).',
+      })
+    }
     if (node.kind === 'smart_uv') {
       const budget = polygonBudgetBefore(graph, node.id)
       if (budget && budget.triangles > SMART_UV_MAX_TRIANGLES) {
@@ -423,16 +551,38 @@ export function checkGraph(graph: PipelineGraph, options: ValidateOptions = {}):
 
 /* ----------------------------------------------------------------------------------- seeds */
 
-/** What a pipeline's runs start from: a picture, a model, or null when it has no seed. */
-export function seedType(graph: PipelineGraph): 'picture' | 'model' | null {
+/** What a pipeline's runs start from: a picture, a model, pictures of each side, or null when it has no seed. */
+export function seedType(graph: PipelineGraph): 'picture' | 'model' | 'views' | null {
   const seed = graph.nodes.find((node) => isSeed(node.kind))
-  return seed ? (seed.kind === 'seed_model' ? 'model' : 'picture') : null
+  if (!seed) return null
+  return seed.kind === 'seed_model' ? 'model' : seed.kind === 'seed_views' ? 'views' : 'picture'
+}
+
+const isPlaced = (value: Record<string, unknown>) =>
+  (typeof value.uploadKey === 'string' && value.uploadKey !== '') ||
+  (typeof value.gen2dPostId === 'number' && Number.isInteger(value.gen2dPostId) && value.gen2dPostId > 0)
+
+/** What is wrong with one multi-view seed: known sides, each once and placed, the front among them. */
+function viewSeedProblem(value: Record<string, unknown>): string | null {
+  if (!Array.isArray(value.views) || value.views.length === 0) return 'a multi-view pipeline takes { views: [{ viewType, uploadKey | gen2dPostId }], name? }.'
+  const seen = new Set<string>()
+  for (const entry of value.views as unknown[]) {
+    const view = (typeof entry === 'object' && entry !== null ? entry : {}) as Record<string, unknown>
+    const viewType = typeof view.viewType === 'string' ? view.viewType : ''
+    if (!(VIEW_TYPES as readonly string[]).includes(viewType)) return `each view is one of ${VIEW_TYPES.join(', ')}.`
+    if (seen.has(viewType)) return `the ${viewType} picture is given twice.`
+    if (!isPlaced(view)) return `the ${viewType} picture needs an uploadKey or a gen2dPostId.`
+    seen.add(viewType)
+  }
+  if (!seen.has('front')) return 'a front picture is required.'
+  return null
 }
 
 /**
  * Whether these seeds can each start a run of this graph (`POST /pipelines/:id/batch`): 1 to 20 of
  * them, each the kind the seed step takes — an upload or an Image library picture for a picture
- * pipeline, a 3D library model for a model pipeline.
+ * pipeline, a 3D library model for a model pipeline, a set of pictures of each side (the front at
+ * least) for a multi-view pipeline.
  */
 export function validateSeeds(graph: PipelineGraph, seeds: readonly unknown[]): Problem[] {
   const problems: Problem[] = []
@@ -446,6 +596,11 @@ export function validateSeeds(graph: PipelineGraph, seeds: readonly unknown[]): 
   }
   seeds.forEach((seed, index) => {
     const value = (typeof seed === 'object' && seed !== null ? seed : {}) as Record<string, unknown>
+    if (type === 'views') {
+      const problem = viewSeedProblem(value)
+      if (problem) problems.push({ code: PROBLEM_CODES.seedInvalid, field: `seeds[${index}]`, message: `Seed ${index + 1}: ${problem}` })
+      return
+    }
     const fits =
       type === 'picture'
         ? (typeof value.uploadKey === 'string' && value.uploadKey !== '') || typeof value.gen2dPostId === 'number'
@@ -482,6 +637,10 @@ const SERVER_MESSAGES: ReadonlyArray<[RegExp, string]> = [
   [/^A connection points at a step that is gone\.$/, PROBLEM_CODES.edgeDangling],
   [/^A connection uses a socket this step does not have\.$/, PROBLEM_CODES.unknownHandle],
   [/^This input takes a /, PROBLEM_CODES.portMismatch],
+  [/ takes one picture\. For pictures of each side, use /, PROBLEM_CODES.portMismatch],
+  [/ takes pictures of each side — connect a Multi-view seed or Draw views/, PROBLEM_CODES.portMismatch],
+  [/^Choose the pictures this run starts from — a front one at least\.$/, PROBLEM_CODES.seedNotChosen],
+  [/: add the pictures of each side — a front one at least\.$/, PROBLEM_CODES.viewsInputMissing],
   [/^An input takes one connection\.$/, PROBLEM_CODES.inputTaken],
   [/^Connect this step to the one before it\.$/, PROBLEM_CODES.inputNotConnected],
   [/^The pipeline loops back on itself\.$/, PROBLEM_CODES.cycle],
@@ -507,13 +666,14 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 /**
  * Reads untrusted JSON into a graph the way the server does when it saves one: nodes without an id
  * and edges without both ends are dropped, ids and labels are cut to length, missing handles are
- * `out` and `in`. A kind is kept as it came — `validateGraph` says when it is not one Zetta runs.
+ * `out` and `in`, and a generation fed views becomes its multi-view step (`withMultiViewSteps`). A
+ * kind is otherwise kept as it came — `validateGraph` says when it is not one Zetta runs.
  */
 export function parseGraph(value: unknown): PipelineGraph {
   const raw = isRecord(value) ? value : {}
   const nodes = Array.isArray(raw.nodes) ? raw.nodes : []
   const edges = Array.isArray(raw.edges) ? raw.edges : []
-  return {
+  return withMultiViewSteps({
     version: PIPELINE_GRAPH_VERSION,
     nodes: nodes
       .filter((node): node is Record<string, unknown> => isRecord(node) && typeof node.id === 'string')
@@ -542,5 +702,5 @@ export function parseGraph(value: unknown): PipelineGraph {
           targetHandle: typeof edge.targetHandle === 'string' ? edge.targetHandle : 'in',
         }),
       ),
-  }
+  })
 }

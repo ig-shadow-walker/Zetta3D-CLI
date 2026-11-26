@@ -14,7 +14,10 @@ export class Tools {
     return this.transport.request('POST', '/ai/tags', { body: input, retry: 'never', timeoutMs: 120_000 })
   }
 
-  /** Guesses the body type of a model from frames, before rigging. */
+  /**
+   * Guesses the body type of a model from 1–4 frames (the Studio sends up to four angles), before
+   * rigging. Each frame is raw base64 JPEG, PNG or WebP of at most 4 MiB of base64.
+   */
   riggingPrecheck(input: { frames: Frame[] }): Promise<RiggingPrecheck> {
     return this.transport.request('POST', '/ai/rigging-precheck', { body: input, retry: 'never', timeoutMs: 120_000 })
   }

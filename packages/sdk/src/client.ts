@@ -1,3 +1,4 @@
+import { ApiKeys } from './resources/api-keys'
 import { Auth } from './resources/auth'
 import { Billing } from './resources/billing'
 import { Catalog } from './resources/catalog'
@@ -5,6 +6,7 @@ import { Generations } from './resources/generations'
 import { Images } from './resources/images'
 import { Pipelines, Runs } from './resources/pipelines'
 import { Tools } from './resources/tools'
+import { Trials } from './resources/trials'
 import { Transport, type TransportOptions } from './transport'
 import { Uploads } from './uploads'
 
@@ -14,13 +16,15 @@ export type ZettaClientOptions = TransportOptions
  * The Zetta 3D API.
  *
  * ```ts
- * const zetta = new ZettaClient({ token: process.env.ZETTA_TOKEN })
+ * const zetta = new ZettaClient({ token: process.env.ZETTA_API_KEY }) // an API key or a session token
  * const { user } = await zetta.auth.me()
  * ```
  */
 export class ZettaClient {
   readonly transport: Transport
   readonly auth: Auth
+  readonly apiKeys: ApiKeys
+  readonly trials: Trials
   readonly billing: Billing
   readonly catalog: Catalog
   readonly generations: Generations
@@ -35,6 +39,8 @@ export class ZettaClient {
     const fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis)
     const sleep = options.sleep
     this.auth = new Auth(this.transport)
+    this.apiKeys = new ApiKeys(this.transport)
+    this.trials = new Trials(this.transport)
     this.billing = new Billing(this.transport)
     this.catalog = new Catalog(this.transport)
     this.generations = new Generations(this.transport, sleep)

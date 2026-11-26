@@ -2,10 +2,15 @@ import {
   buildSplatRequest,
   buildWorldExportRequest,
   checkEntitlements,
+  defaultSplatSubject,
   fromBase64,
   imageForPromptRequest,
   normalizeAzimuth,
+  SPLAT_ASPECT_RATIOS,
   SPLAT_ENGINES,
+  SPLAT_RESOLUTIONS,
+  splatOffersCutOut,
+  splatPictureProblems,
   WORLD_MESH_VARIANTS,
   WORLD_SPLAT_RESOLUTIONS,
   ZettaError,
@@ -33,17 +38,21 @@ export const splatCreate = defineCommand({
   path: ['splat', 'create'],
   summary: 'Make a Gaussian-splat object or world from pictures, a video, or a prompt (early access).',
   description: [
-    'Engines: splat (an object or scene from one picture), splat2 and splat2.1 (whole worlds; also from a video, or several pictures of the same place).',
-    'More pictures of the same place: --world-view <azimuth>=<picture>, e.g. 90=right.jpg (degrees clockwise from the main picture).',
+    'Engines: splat (Zetta Splat: an object or scene from one picture), splat2 and splat2.1 (Zetta Splat 2 and 2.1: whole worlds; also from a video, or several pictures of the same place).',
+    'A prompt is made into a picture first: an object on a plain background, or with --subject environment a whole place in a --aspect-ratio and --resolution frame (16:9 at 1K by default).',
+    'More pictures of the same place: --world-view <azimuth>=<picture>, e.g. 90=right.jpg (degrees clockwise from the main picture, 1–359; leave the angle out if unknown). Up to 3, or 7 with --same-space.',
     'Exports from a world: `zetta splat export <id> --as splat|mesh|collider`.',
   ].join('\n'),
   kind: 'spend',
   input: z.object({
     image: z.string().optional().describe('The main picture: a file, URL or image:<id>.'),
     video: z.string().optional().describe('A video of the place (splat2/2.1): MP4, WebM, MOV or AVI up to 100 MB.'),
-    prompt: z.string().max(5000).optional().describe('Describe the scene. Without a picture, a picture is made from it first.'),
-    engine: z.string().optional().describe('splat (default), splat2 or splat2.1.'),
-    subject: z.enum(['object', 'environment']).optional().describe('An object, or an environment (changes how a prompt picture is framed).'),
+    prompt: z.string().max(1024).optional().describe('Describe the scene. Without a picture, a picture is made from it first; beside a picture or video on splat2/2.1, it describes the scene.'),
+    engine: z.string().optional().describe('splat (default, id n25), splat2 (zs2) or splat2.1 (zs21).'),
+    subject: z.enum(['object', 'environment']).optional().describe('What a prompt picture shows: an object, or an environment (default environment on splat2/2.1, object on splat).'),
+    aspectRatio: z.enum(SPLAT_ASPECT_RATIOS).optional().describe('Frame of an environment picture made from --prompt (default 16:9).'),
+    resolution: z.enum(SPLAT_RESOLUTIONS).optional().describe('Size of an environment picture made from --prompt (default 1K).'),
+    removeBg: z.boolean().optional().describe('Cut the object out of its background first (an object on the splat engine only).'),
     worldView: z.array(z.string()).optional().describe('Extra pictures of the same place as azimuth=picture (splat2/2.1).'),
     sameSpace: z.boolean().optional().describe('Reconstruct from all pictures together (up to 8).'),
     seed: z.number().int().optional().describe('Seed (splat engine only).'),
@@ -54,10 +63,16 @@ export const splatCreate = defineCommand({
     ...spendShape,
     ...waitShape,
   }),
-  examples: ['zetta splat create --image room.jpg --engine splat2 --dry-run', 'zetta splat create --video walkthrough.mp4 --engine splat2.1 --yes --wait'],
+  short: { prompt: 'p', image: 'i' },
+  examples: [
+    'zetta splat create --image room.jpg --engine splat2 --dry-run',
+    'zetta splat create --video walkthrough.mp4 --engine splat2.1 --yes --wait',
+    'zetta splat create -p "a misty pine forest clearing" --engine splat2 --aspect-ratio 21:9 --resolution 2K --dry-run',
+  ],
   async run(ctx, input) {
     const engine = splatEngine(input.engine)
     if (!input.image && !input.video && !input.prompt) throw usageError('Give --image, --video or --prompt.')
+    const subject = input.subject ?? defaultSplatSubject(engine)
     const views = (input.worldView ?? []).map((value) => {
       const at = value.indexOf('=')
       const azimuth = at > 0 ? normalizeAzimuth(value.slice(0, at)) : null
@@ -66,10 +81,17 @@ export const splatCreate = defineCommand({
       return { azimuth, source }
     })
     const fromPrompt = Boolean(input.prompt && !input.image && !input.video)
+    if ((input.aspectRatio || input.resolution) && !fromPrompt) {
+      throw usageError('--aspect-ratio and --resolution shape the picture made from --prompt; they do nothing beside --image or --video.')
+    }
+    const frame = splatPictureProblems({ subject, ...(input.aspectRatio ? { aspectRatio: input.aspectRatio } : {}), ...(input.resolution ? { resolution: input.resolution } : {}) })
+    if (frame.length) failOnProblems(frame)
+    const cutOut = Boolean(input.removeBg) && splatOffersCutOut(engine, subject)
     const client = await ctx.client()
     const base = (sources: { imageUrl?: string; videoUrl?: string; worldViews?: SplatInput['worldViews'] }): SplatInput => ({
       engine,
       ...(input.subject ? { subject: input.subject } : {}),
+      ...(input.removeBg ? { removeBackground: true } : {}),
       ...(sources.imageUrl ? { imageUrl: sources.imageUrl } : {}),
       ...(sources.videoUrl ? { videoUrl: sources.videoUrl } : {}),
       ...(sources.worldViews?.length ? { worldViews: sources.worldViews } : {}),
@@ -104,13 +126,24 @@ export const splatCreate = defineCommand({
         const sources: { imageUrl?: string; videoUrl?: string; worldViews?: SplatInput['worldViews'] } = {}
         if (fromPrompt) {
           ctx.out.progress({ stage: 'image', message: 'Making a picture from the prompt…' })
-          const request = imageForPromptRequest(input.prompt!, { subject: input.subject ?? 'environment' })
+          const request = imageForPromptRequest(input.prompt!, {
+            subject,
+            ...(input.aspectRatio ? { aspectRatio: input.aspectRatio } : {}),
+            ...(input.resolution ? { resolution: input.resolution } : {}),
+          })
           const result = await client.images.generate(request.body, crypto.randomUUID())
           const image = result.images[0]
           if (!image) throw new ZettaError({ code: 'IMAGE_GEN_NO_IMAGE', message: 'No picture came back for the prompt.' })
-          sources.imageUrl = (await client.uploads.upload(new Blob([fromBase64(image.base64) as BlobPart], { type: image.contentType }), { contentType: image.contentType })).fileUrl
+          let bytes = fromBase64(image.base64)
+          let contentType = image.contentType
+          if (cutOut) {
+            ctx.out.progress({ stage: 'remove-background', message: 'Removing the background from the picture…' })
+            bytes = fromBase64((await client.tools.removeBackground(image.base64)).image)
+            contentType = 'image/png'
+          }
+          sources.imageUrl = (await client.uploads.upload(new Blob([bytes as BlobPart], { type: contentType }), { contentType })).fileUrl
         }
-        if (input.image) sources.imageUrl = (await resolvePicture(ctx, client, input.image, { label: 'the picture' })).url
+        if (input.image) sources.imageUrl = (await resolvePicture(ctx, client, input.image, { removeBackground: cutOut, label: 'the picture' })).url
         if (input.video) sources.videoUrl = isUrl(input.video) ? input.video : (await uploadLocal(ctx, client, input.video, 'video')).fileUrl
         if (views.length) {
           sources.worldViews = []

@@ -1,141 +1,216 @@
-import { tokenExpiry, ZettaError } from '@zetta3d/sdk'
+import { apiKeyHint, isApiKey, isWellFormedApiKey, tokenExpiry, ZettaError } from '@zetta3d/sdk'
 import { z } from 'zod'
 import { openBrowser } from '../auth/browser'
 import { startLoopbackLogin } from '../auth/loopback'
 import type { Context } from '../core/context'
+import { credentialKind, type CredentialKind, type StoredCredential } from '../core/credentials'
 import { defineCommand } from '../core/define'
-import { cliError, usageError } from '../core/errors'
+import { usageError } from '../core/errors'
+
+type LoginMethod = 'web' | 'api_key'
 
 interface LoginResult {
   signedIn: true
   email: string
   plan: string
   profile: string
-  method: 'web' | 'email' | 'token'
+  method: LoginMethod
+  /** `session` (a 30-day token) or `api_key` (until revoked). */
+  credential: CredentialKind
+  /** For an API key: `zk_live_Ab3x…wxyz`. Never the key itself. */
+  keyHint?: string
   storedIn: string
   expiresAt: string | null
 }
 
-async function finishLogin(ctx: Context, token: string, method: LoginResult['method']): Promise<LoginResult> {
+/**
+ * Checks a credential against the API and saves it as this profile's sign-in, replacing whatever
+ * was there. Also used by `apikey create --save`.
+ */
+export async function saveCredential(
+  ctx: Context,
+  token: string,
+  method: LoginMethod,
+  extra: Pick<StoredCredential, 'apiKeyId'> = {},
+): Promise<LoginResult> {
+  const kind = credentialKind(token)
   const { user } = await ctx.makeClient(token).auth.me()
-  const expiry = tokenExpiry(token)
+  const expiry = kind === 'session' ? tokenExpiry(token) : undefined
   const storedIn = await ctx.credentials.set(ctx.profileName, {
     token,
     email: user.email,
     userId: user.id,
     ...(expiry ? { expiresAt: expiry.toISOString() } : {}),
     savedAt: new Date().toISOString(),
-    method,
+    method: kind === 'api_key' ? 'api_key' : method,
+    ...extra,
   })
   return {
     signedIn: true,
     email: user.email,
     plan: user.paymentPlan,
     profile: ctx.profileName,
-    method,
+    method: kind === 'api_key' ? 'api_key' : method,
+    credential: kind,
+    ...(kind === 'api_key' ? { keyHint: apiKeyHint(token) } : {}),
     storedIn: storedIn === 'keychain' ? 'system keychain' : 'credentials file',
     expiresAt: expiry?.toISOString() ?? null,
   }
 }
 
+function envOverrideWarning(ctx: Context): void {
+  const set = ctx.credentials.envVarsSet()
+  if (set.length) ctx.out.warn(`${set.join(' and ')} ${set.length > 1 ? 'are' : 'is'} set and wins over the saved sign-in; unset it to use what you just saved.`)
+}
+
 const renderLogin = (r: LoginResult) =>
-  `Signed in as ${r.email} (${r.plan} plan)${r.profile === 'default' ? '' : ` on profile "${r.profile}"`}.\nToken saved in the ${r.storedIn}${r.expiresAt ? `; it expires ${r.expiresAt.slice(0, 10)}` : ''}.`
+  [
+    `Signed in as ${r.email} (${r.plan} plan)${r.profile === 'default' ? '' : ` on profile "${r.profile}"`}${r.credential === 'api_key' ? ` with API key ${r.keyHint}` : ''}.`,
+    r.credential === 'api_key'
+      ? `Key saved in the ${r.storedIn}; it works until it is revoked. Key management and billing changes still need \`zetta auth login\`.`
+      : `Token saved in the ${r.storedIn}${r.expiresAt ? `; it expires ${r.expiresAt.slice(0, 10)}` : ''}.`,
+  ].join('\n')
+
+async function readApiKey(ctx: Context): Promise<string> {
+  if (ctx.interactive) {
+    ctx.out.info('Paste your API key (zk_live_…). Make one with `zetta apikey create <name>` or on the website under Profile › API keys.')
+    return (await ctx.askSecret('API key: ')).trim()
+  }
+  return (await ctx.readStdin()).trim()
+}
 
 export const authLogin = defineCommand({
   path: ['auth', 'login'],
-  summary: 'Sign in to your Zetta 3D account.',
+  summary: 'Sign in to your Zetta 3D account in the browser (or with an API key).',
   description: [
-    'Three ways to sign in:',
-    '  (default)        Opens zetta3d.ai in your browser; click Connect.',
-    '  --email <addr>   No browser needed: we email you a sign-in link; paste it back here.',
-    '  --with-token     Reads a token from stdin (for CI and agents). Get one with `zetta auth token` on a machine where you are signed in.',
-    'You can also skip signing in and set ZETTA_TOKEN.',
+    'Ways to sign in:',
+    '  (default)        Opens zetta3d.ai in your browser; sign in there and click Connect.',
+    '  --api-key        An API key (zk_live_…), piped on stdin or typed at a hidden prompt. For CI, scripts, servers and',
+    '                   machines without a browser. Make one on the website (Profile › API keys) or with `zetta apikey create`.',
+    'Instead of signing in, a script can also set ZETTA_API_KEY.',
+    'An API key generates, makes pictures, runs pipelines and reads your balance; managing keys, billing and the account needs the browser sign-in.',
   ].join('\n'),
   kind: 'write',
   auth: false,
   mcp: false,
   input: z.object({
-    email: z.string().email().optional().describe('Sign in with an emailed link instead of the browser.'),
-    withToken: z.boolean().optional().describe('Read a token from stdin.'),
-    link: z.string().optional().describe('With --email: the link (or token) from the email, if you already have it.'),
-    printUrl: z.boolean().optional().describe('Print the sign-in address instead of opening a browser.'),
+    apiKey: z.boolean().optional().describe('Sign in with an API key, read from stdin when piped, else from a hidden prompt. Never pass the key as an argument.'),
+    printUrl: z.boolean().optional().describe('Print the sign-in address instead of opening the browser (open it in a browser on this computer).'),
   }),
-  examples: ['zetta auth login', 'zetta auth login --email you@example.com', 'echo "$ZETTA_TOKEN" | zetta auth login --with-token'],
+  examples: ['zetta auth login', 'zetta auth login --api-key', 'echo "$ZETTA_API_KEY" | zetta auth login --api-key'],
   async run(ctx, input) {
-    if (input.withToken) {
-      const token = (await ctx.readStdin()).trim()
-      if (!token) throw usageError('No token on stdin. Pipe one in: echo "$TOKEN" | zetta auth login --with-token')
-      return finishLogin(ctx, token, 'token')
-    }
-
-    if (input.email || input.link) {
-      let link = input.link
-      if (!link) {
-        if (!input.email) throw usageError('Give --email <address>.')
-        await ctx.publicClient().auth.requestMagicLink(input.email)
-        if (!ctx.interactive) {
-          return {
-            signedIn: false,
-            emailSent: true,
-            email: input.email,
-            next: `Copy the link from the email (do not click it — it works only once) and run: zetta auth login --email ${input.email} --link "<link>"`,
-          }
-        }
-        ctx.out.info(`We emailed a sign-in link to ${input.email}.`)
-        ctx.out.info('Copy the link from the email — do not click it; it works only once — and paste it here.')
-        link = (await ctx.ask('Link: ')).trim()
-        if (!link) throw cliError('LOGIN_CANCELLED', 'No link given.')
+    if (input.apiKey) {
+      const key = await readApiKey(ctx)
+      if (!key) throw usageError('No API key given. Pipe one in (echo "$ZETTA_API_KEY" | zetta auth login --api-key) or run it in a terminal to be asked.')
+      if (!isApiKey(key) || !isWellFormedApiKey(key)) {
+        throw usageError('That does not look like a Zetta API key. Keys start with zk_live_ and have 51 characters.')
       }
-      const verified = await ctx.publicClient().auth.verifyMagicLink(link)
-      return finishLogin(ctx, verified.token, 'email')
+      const result = await saveCredential(ctx, key, 'api_key')
+      envOverrideWarning(ctx)
+      return result
     }
 
-    if (!ctx.interactive && !input.printUrl) {
-      throw usageError('Signing in with the browser needs a terminal. Use --email <address>, --with-token, or set ZETTA_TOKEN.')
+    // The browser hands the sign-in back to this computer (127.0.0.1), so it has to run here.
+    if (!input.printUrl && !ctx.interactive) {
+      throw usageError('Signing in opens a browser, so it needs a person at a terminal. For scripts, CI and agents, use an API key: set ZETTA_API_KEY.')
+    }
+    if (!input.printUrl && !ctx.canOpenBrowser) {
+      throw usageError(
+        'This computer has no browser to sign in with (a server, or an SSH session). Use an API key here: make one on zetta3d.ai (Profile › API keys), then run `zetta auth login --api-key` or set ZETTA_API_KEY. On a desktop where the browser did not open, use --print-url.',
+      )
     }
     const session = await startLoopbackLogin(ctx.profile.siteUrl)
     try {
-      const opened = !input.printUrl && ctx.canOpenBrowser && (await openBrowser(session.url))
-      ctx.out.info(opened ? 'Opened your browser. Click Connect to finish signing in.' : 'Open this address in a browser on this computer and click Connect:')
+      const opened = !input.printUrl && (await openBrowser(session.url))
+      ctx.out.info(opened ? 'Opened your browser. Sign in there and click Connect.' : 'Open this address in a browser on this computer, sign in and click Connect:')
       if (!opened) ctx.out.info(`  ${session.url}`)
-      ctx.out.info('Waiting… (Ctrl-C to cancel; no browser here? use --email)')
+      ctx.out.info('Waiting… (Ctrl-C to cancel)')
       const token = await session.token
-      return await finishLogin(ctx, token, 'web')
+      const result = await saveCredential(ctx, token, 'web')
+      envOverrideWarning(ctx)
+      return result
     } finally {
       session.close()
     }
   },
-  text: (r: LoginResult | { signedIn: false; next: string; email: string }) =>
-    'next' in r ? `Sign-in link sent to ${r.email}.\n${r.next}` : renderLogin(r),
+  text: renderLogin,
 })
 
 export const authLogout = defineCommand({
   path: ['auth', 'logout'],
-  summary: 'Forget the saved token for this profile.',
-  description: 'Note: tokens cannot be revoked server-side yet, so a copied token keeps working until it expires.',
+  summary: 'Forget the saved sign-in (token or API key) for this profile.',
+  description:
+    'Only the local copy is deleted. A session token keeps working until it expires; an API key keeps working until it is revoked (`zetta apikey revoke <id>`, or on the website).',
   kind: 'write',
   auth: false,
   mcp: false,
   input: z.object({}),
   async run(ctx) {
+    const saved = await ctx.credentials.get(ctx.profileName, { ignoreEnv: true })
     const removed = await ctx.credentials.delete(ctx.profileName)
-    if (ctx.env.ZETTA_TOKEN) ctx.out.warn('ZETTA_TOKEN is still set in your environment; unset it to sign out completely.')
-    return { signedOut: removed, profile: ctx.profileName }
+    for (const name of ctx.credentials.envVarsSet()) ctx.out.warn(`${name} is still set in your environment; unset it to sign out completely.`)
+    return {
+      signedOut: removed,
+      profile: ctx.profileName,
+      ...(removed && saved ? { credential: saved.kind, ...(saved.kind === 'api_key' ? { keyHint: apiKeyHint(saved.credential.token) } : {}) } : {}),
+    }
   },
-  text: (r: { signedOut: boolean; profile: string }) => (r.signedOut ? 'Signed out.' : 'You were not signed in.'),
+  text: (r: { signedOut: boolean; credential?: CredentialKind; keyHint?: string }) =>
+    !r.signedOut
+      ? 'You were not signed in.'
+      : r.credential === 'api_key'
+        ? `Signed out. The API key ${r.keyHint} still works until you revoke it: \`zetta apikey revoke <id>\` (after \`zetta auth login\`) or on the website.`
+        : 'Signed out.',
 })
+
+interface StatusResult {
+  profile: string
+  apiUrl: string
+  signedIn: boolean
+  email?: string
+  plan?: string
+  earlyAccess?: boolean
+  /** `session` or `api_key`. */
+  credential?: CredentialKind
+  keyHint?: string
+  /** `env`, `keychain` or `file`. */
+  tokenSource?: string
+  /** The variable it came from, when `tokenSource` is `env`. */
+  envVar?: string
+  expiresAt?: string | null
+  daysLeft?: number | null
+  reason?: string
+  next?: string
+}
+
+function describeSource(r: StatusResult): string {
+  const what = r.credential === 'api_key' ? `API key ${r.keyHint}` : 'session token'
+  const from = r.tokenSource === 'env' ? (r.envVar ?? 'environment') : r.tokenSource === 'keychain' ? 'keychain' : 'credentials file'
+  return `${what} from ${from}`
+}
 
 export const authStatus = defineCommand({
   path: ['auth', 'status'],
-  summary: 'Show who you are signed in as, and where the token comes from.',
+  summary: 'Show who you are signed in as, with what kind of credential, and where it comes from.',
+  description:
+    'The credential is the browser sign-in (30 days) or an API key (zk_live_…, until revoked). ZETTA_API_KEY wins over the saved sign-in. Keys are shown as a hint (zk_live_Ab3x…wxyz), never in full.',
   kind: 'read',
   auth: false,
   input: z.object({}),
-  async run(ctx) {
+  async run(ctx): Promise<StatusResult> {
     const stored = await ctx.storedCredential()
     const base = { profile: ctx.profileName, apiUrl: ctx.profile.apiUrl }
     if (!stored) return { ...base, signedIn: false, next: 'zetta auth login' }
-    const expiry = stored.credential.expiresAt ? new Date(stored.credential.expiresAt) : tokenExpiry(stored.credential.token)
+    const set = ctx.credentials.envVarsSet()
+    if (set.length > 1) ctx.out.warn(`${set.join(' and ')} are both set; ${set[0]} is used.`)
+    const isKey = stored.kind === 'api_key'
+    const source = {
+      credential: stored.kind,
+      ...(isKey ? { keyHint: apiKeyHint(stored.credential.token) } : {}),
+      tokenSource: stored.source,
+      ...(stored.envVar ? { envVar: stored.envVar } : {}),
+    }
+    const expiry = isKey ? undefined : stored.credential.expiresAt ? new Date(stored.credential.expiresAt) : tokenExpiry(stored.credential.token)
     const daysLeft = expiry ? Math.floor((expiry.getTime() - Date.now()) / 86_400_000) : null
     try {
       const { user } = await ctx.makeClient(stored.credential.token).auth.me()
@@ -146,38 +221,29 @@ export const authStatus = defineCommand({
         email: user.email,
         plan: user.paymentPlan,
         earlyAccess: user.earlyAccess,
-        tokenSource: stored.source,
+        ...source,
         expiresAt: expiry?.toISOString() ?? null,
         daysLeft,
       }
     } catch (error) {
       if (error instanceof ZettaError && error.status === 401) {
-        return { ...base, signedIn: false, tokenSource: stored.source, reason: 'The saved token is no longer accepted.', next: 'zetta auth login' }
+        return {
+          ...base,
+          signedIn: false,
+          ...source,
+          reason: isKey ? 'The API key is no longer accepted (revoked, or mistyped).' : 'The saved token is no longer accepted.',
+          next: isKey && stored.envVar ? `Fix or unset ${stored.envVar}, or run \`zetta auth login\`` : 'zetta auth login',
+        }
       }
       throw error
     }
   },
-  text: (r: Record<string, unknown>) =>
+  text: (r: StatusResult) =>
     r.signedIn
-      ? `Signed in as ${String(r.email)} (${String(r.plan)} plan) · profile ${String(r.profile)} · token from ${String(r.tokenSource)}${r.daysLeft !== null ? ` · expires in ${String(r.daysLeft)} days` : ''}`
-      : `Not signed in${r.reason ? `: ${String(r.reason)}` : ''}. Run \`zetta auth login\`.`,
+      ? `Signed in as ${String(r.email)} (${String(r.plan)} plan) · profile ${r.profile} · ${describeSource(r)}${
+          r.credential === 'api_key' ? ' · does not expire' : r.daysLeft !== null && r.daysLeft !== undefined ? ` · expires in ${r.daysLeft} days` : ''
+        }`
+      : `Not signed in${r.reason ? `: ${r.reason}` : ''}${r.tokenSource ? ` (${describeSource(r)})` : ''}. Run \`zetta auth login\`.`,
 })
 
-export const authToken = defineCommand({
-  path: ['auth', 'token'],
-  summary: 'Print the saved token (to copy to CI or a machine without a browser).',
-  description: 'Treat it like a password: anyone with it can use your account and credits until it expires.',
-  kind: 'read',
-  auth: true,
-  mcp: false,
-  input: z.object({}),
-  async run(ctx) {
-    const stored = await ctx.storedCredential()
-    if (!stored) throw cliError('NOT_LOGGED_IN', 'Not signed in.')
-    if (ctx.out.isText) ctx.out.warn('This token gives full access to your account. Store it as a secret.')
-    return { token: stored.credential.token, expiresAt: stored.credential.expiresAt ?? tokenExpiry(stored.credential.token)?.toISOString() ?? null }
-  },
-  text: (r: { token: string }) => r.token,
-})
-
-export const authCommands = [authLogin, authLogout, authStatus, authToken]
+export const authCommands = [authLogin, authLogout, authStatus]

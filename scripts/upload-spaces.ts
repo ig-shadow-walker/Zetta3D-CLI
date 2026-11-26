@@ -1,7 +1,7 @@
 /**
- * Publishes builds to the Zetta storage bucket (DigitalOcean Spaces, through the S3 API) under zcli/,
- * which https://downloads.zetta3d.ai/zcli serves. Every file is public: the one-line installers
- * and `zetta upgrade` download them without keys.
+ * Publishes builds to the Zetta storage bucket (DigitalOcean Spaces, through the S3 API) under one
+ * folder (SPACES_FOLDER, default zcli/). Every file is public: the one-line installers and
+ * `zetta upgrade` download them without keys.
  *
  *   zcli/macosx/zetta-darwin-arm64 (+ .sha256)     the newest build, one folder per OS
  *   zcli/windows/zetta-windows-x64.exe              zcli/linux/zetta-linux-x64-musl   …
@@ -24,10 +24,10 @@ const BINARY = 'application/octet-stream'
 const TEXT = 'text/plain; charset=utf-8'
 
 /** Where a build key's newest binary goes, e.g. zcli/macosx/zetta-darwin-arm64. */
-export function storageKey(key: string): string {
-  const folder = OS_FOLDERS[key.split('-')[0] ?? '']
-  if (!folder) throw new Error(`There is no storage folder for "${key}".`)
-  return `${STORAGE_PREFIX}/${folder}/${binaryName(key)}`
+export function storageKey(key: string, folder: string = STORAGE_PREFIX): string {
+  const os = OS_FOLDERS[key.split('-')[0] ?? '']
+  if (!os) throw new Error(`There is no storage folder for "${key}".`)
+  return `${folder}/${os}/${binaryName(key)}`
 }
 
 export interface SpacesConfig {
@@ -40,22 +40,63 @@ export interface SpacesConfig {
   virtualHostedStyle: boolean
   /** Where uploaded files can be fetched from (the CDN when SPACES_CDN_ENDPOINT is set). */
   publicBase: string
+  /** The folder in the bucket that holds the releases (SPACES_FOLDER, default zcli). */
+  folder: string
+  /** The address installed copies and the installers download releases from: ZETTA_PUBLIC_BASE, else <publicBase>/<folder>. */
+  downloadBase: string
 }
 
 const REQUIRED = ['SPACES_KEY', 'SPACES_SECRET', 'SPACES_BUCKET', 'SPACES_ENDPOINT'] as const
+
+/** The bucket's own address, https://<bucket>.<region>.digitaloceanspaces.com (the endpoint may already name the bucket). */
+function bucketAddress(bucket: string, endpoint: string): string {
+  const url = new URL(/^https?:\/\//i.test(endpoint) ? endpoint : `https://${endpoint}`)
+  const host = url.host.startsWith(`${bucket}.`) ? url.host.slice(bucket.length + 1) : url.host
+  return `${url.protocol}//${bucket}.${host}`
+}
+
+export interface PublicLocation {
+  /** The folder in the bucket (SPACES_FOLDER, default zcli). */
+  folder: string
+  /** Where installers and installed copies download releases from. */
+  downloadBase: string
+}
+
+/**
+ * Where a release will be downloaded from. Needs no keys: `base` (or ZETTA_PUBLIC_BASE) when given,
+ * else built from SPACES_BUCKET and SPACES_ENDPOINT (through SPACES_CDN_ENDPOINT when set) plus the folder.
+ */
+export function publicLocation(env: NodeJS.ProcessEnv = process.env, options: { base?: string | undefined; folder?: string | undefined } = {}): PublicLocation {
+  const folder = (options.folder?.trim() || env.SPACES_FOLDER?.trim() || STORAGE_PREFIX).replace(/^\/+|\/+$/g, '')
+  if (!/^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/.test(folder)) throw new Error(`"${folder}" is not a folder name (letters, digits, . _ - and /).`)
+  const base = (options.base ?? env.ZETTA_PUBLIC_BASE)?.trim().replace(/\/+$/, '')
+  if (base) {
+    // https, except for a stand-in on this machine (tests and rehearsals).
+    if (!base.startsWith('https://') && !/^http:\/\/([a-z0-9-]+\.)?localhost(:\d+)?(\/|$)/.test(base)) throw new Error(`The download address must be https://, not "${base}".`)
+    return { folder, downloadBase: base }
+  }
+  const bucket = env.SPACES_BUCKET?.trim()
+  const endpoint = env.SPACES_ENDPOINT?.trim()
+  if (!bucket || !endpoint) {
+    throw new Error(
+      'Say where the release will be downloaded from: --base https://<bucket>.<region>.digitaloceanspaces.com/<folder> (the bucket’s Origin or CDN endpoint, plus the folder), or set SPACES_BUCKET and SPACES_ENDPOINT.',
+    )
+  }
+  const cdn = env.SPACES_CDN_ENDPOINT?.trim().replace(/\/+$/, '')
+  return { folder, downloadBase: `${cdn || bucketAddress(bucket, endpoint)}/${folder}` }
+}
 
 /** Reads the SPACES_* settings. Throws, naming only what is missing, when any are unset. */
 export function spacesConfig(env: NodeJS.ProcessEnv = process.env): SpacesConfig {
   const missing = REQUIRED.filter((name) => !env[name]?.trim())
   if (missing.length) throw new Error(`Uploading needs ${missing.join(', ')} in the environment (the same settings the backend uses). See docs/releasing.md.`)
   const bucket = env.SPACES_BUCKET!.trim()
-  const raw = env.SPACES_ENDPOINT!.trim()
-  const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`)
-  // Spaces is virtual-hosted (https://<bucket>.<region>.digitaloceanspaces.com). Accept the
-  // endpoint with or without the bucket in front, as the backend does.
-  const host = url.host.startsWith(`${bucket}.`) ? url.host.slice(bucket.length + 1) : url.host
-  const endpoint = `${url.protocol}//${bucket}.${host}`
+  const endpoint = bucketAddress(bucket, env.SPACES_ENDPOINT!.trim())
   const cdn = env.SPACES_CDN_ENDPOINT?.trim().replace(/\/+$/, '')
+  const publicBase = cdn || endpoint
+  const override = env.ZETTA_PUBLIC_BASE?.trim()
+  if (override && !override.startsWith('https://')) throw new Error('ZETTA_PUBLIC_BASE must be an https:// address.')
+  const { folder, downloadBase } = publicLocation(env)
   return {
     bucket,
     endpoint,
@@ -63,7 +104,9 @@ export function spacesConfig(env: NodeJS.ProcessEnv = process.env): SpacesConfig
     accessKeyId: env.SPACES_KEY!.trim(),
     secretAccessKey: env.SPACES_SECRET!.trim(),
     virtualHostedStyle: true,
-    publicBase: cdn || endpoint,
+    publicBase,
+    folder,
+    downloadBase,
   }
 }
 
@@ -93,7 +136,19 @@ export interface ReleasePlan {
  *   cannot use.
  * - A prerelease (1.2.0-beta.1) gets its version folder only: it never becomes the newest build.
  */
-export function releasePlan(input: { version: string; versionDir: string; latestJson: string; installDir: string; keys: string[]; releaseKeys: string[] }): ReleasePlan {
+export function releasePlan(input: {
+  version: string
+  versionDir: string
+  latestJson: string
+  installDir: string
+  keys: string[]
+  releaseKeys: string[]
+  /** The bucket folder (default zcli). */
+  folder?: string
+  /** Written into the uploaded installers as their default download address. */
+  downloadBase?: string
+}): ReleasePlan {
+  const folder = input.folder ?? STORAGE_PREFIX
   const prerelease = input.version.includes('-')
   const missing = input.releaseKeys.filter((key) => !existsSync(join(input.versionDir, binaryName(key))))
   const complete = missing.length === 0
@@ -103,30 +158,44 @@ export function releasePlan(input: { version: string; versionDir: string; latest
     const names = readdirSync(input.versionDir)
       .filter((name) => keyFromBinaryName(name.replace(/\.gz$/, '')))
       .sort()
-    for (const name of names) objects.push({ key: `${STORAGE_PREFIX}/v${input.version}/${name}`, type: BINARY, file: join(input.versionDir, name) })
-    objects.push({ key: `${STORAGE_PREFIX}/v${input.version}/SHA256SUMS`, type: TEXT, file: join(input.versionDir, 'SHA256SUMS') })
+    for (const name of names) objects.push({ key: `${folder}/v${input.version}/${name}`, type: BINARY, file: join(input.versionDir, name) })
+    objects.push({ key: `${folder}/v${input.version}/SHA256SUMS`, type: TEXT, file: join(input.versionDir, 'SHA256SUMS') })
   }
   if (!prerelease) {
     for (const key of input.keys) {
       const file = join(input.versionDir, binaryName(key))
       if (!existsSync(file)) continue
       const sha256 = createHash('sha256').update(readFileSync(file)).digest('hex')
-      objects.push({ key: storageKey(key), type: BINARY, file })
-      objects.push({ key: `${storageKey(key)}.sha256`, type: TEXT, text: `${sha256}  ${binaryName(key)}\n` })
+      objects.push({ key: storageKey(key, folder), type: BINARY, file })
+      objects.push({ key: `${storageKey(key, folder)}.sha256`, type: TEXT, text: `${sha256}  ${binaryName(key)}\n` })
     }
   }
   if (complete && !prerelease) {
-    objects.push({ key: `${STORAGE_PREFIX}/install.sh`, type: TEXT, file: join(input.installDir, 'install.sh') })
-    objects.push({ key: `${STORAGE_PREFIX}/install.ps1`, type: TEXT, file: join(input.installDir, 'install.ps1') })
-    objects.push({ key: `${STORAGE_PREFIX}/latest.json`, type: 'application/json', file: input.latestJson })
+    for (const script of ['install.sh', 'install.ps1']) {
+      const text = readFileSync(join(input.installDir, script), 'utf8')
+      objects.push({ key: `${folder}/${script}`, type: TEXT, text: input.downloadBase ? withDownloadBase(text, input.downloadBase) : text })
+    }
+    objects.push({ key: `${folder}/latest.json`, type: 'application/json', file: input.latestJson })
   }
 
   const note = !complete
     ? `Not every platform is built (missing ${missing.join(', ')}), so the one-line installers and \`zetta upgrade\` keep the release they had. Build them all with \`bun run build all --upload\`.`
     : prerelease
-      ? `${input.version} is a prerelease: it is uploaded to ${STORAGE_PREFIX}/v${input.version}/ only. Install it with ZETTA_VERSION=${input.version}.`
+      ? `${input.version} is a prerelease: it is uploaded to ${folder}/v${input.version}/ only. Install it with ZETTA_VERSION=${input.version}.`
       : undefined
   return { objects, installers: complete && !prerelease, ...(note ? { note } : {}) }
+}
+
+/**
+ * An installer with its default download address replaced, so `curl … | sh` downloads from where
+ * this release lives. Fails loudly if the line it replaces is ever renamed.
+ */
+export function withDownloadBase(script: string, base: string): string {
+  const sh = /^DEFAULT_BASE="[^"]*"$/m
+  const ps1 = /^(\s*)\$DefaultBase = '[^']*'$/m
+  if (sh.test(script)) return script.replace(sh, `DEFAULT_BASE="${base}"`)
+  if (ps1.test(script)) return script.replace(ps1, `$1$DefaultBase = '${base}'`)
+  throw new Error('The installer has no default download address to set (DEFAULT_BASE / $DefaultBase).')
 }
 
 /** Uploads the objects in order, each readable by anyone (the installers fetch them without keys). */

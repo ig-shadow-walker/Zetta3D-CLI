@@ -1,14 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import {
+  SPLAT_ASPECT_RATIOS,
   SPLAT_EARLY_ACCESS_NOTE,
   SPLAT_ENGINES,
+  SPLAT_RESOLUTIONS,
   buildSplatRequest,
   buildWorldExportRequest,
+  defaultSplatSubject,
   maxWorldPictures,
   splatOffersCutOut,
+  splatPictureProblems,
   type SplatInput,
   type WorldExportInput,
 } from '../../src/builders/splat'
+import { imageForPromptRequest } from '../../src/builders/prompts'
 
 const IMG = 'https://cdn.example.com/room.png'
 const VIDEO = 'https://cdn.example.com/walk.mp4'
@@ -120,6 +125,50 @@ describe('a world from several directions', () => {
     expect(codes({ imageUrl: IMG, worldViews: [view(90)] })).toEqual(['WORLD_VIEWS_NOT_SUPPORTED'])
     expect(codes({ engine: 'zs2', videoUrl: VIDEO, worldViews: [view(90)] })).toEqual(['WORLD_VIEWS_NEED_IMAGE'])
     expect(codes({ engine: 'zs2', imageUrl: IMG, reconstructImages: true })).toEqual(['RECONSTRUCT_NEEDS_VIEWS'])
+  })
+})
+
+describe('the subject and the picture a prompt becomes', () => {
+  it('defaults to an environment on the world engines and an object on Zetta Splat', () => {
+    expect(defaultSplatSubject('zs2')).toBe('environment')
+    expect(defaultSplatSubject('zs21')).toBe('environment')
+    expect(defaultSplatSubject('n25')).toBe('object')
+  })
+
+  it('offers the Studio’s frames for an environment, and none for an object', () => {
+    expect([...SPLAT_ASPECT_RATIOS]).toEqual(['16:9', '21:9', '3:2', '4:3', '1:1'])
+    expect([...SPLAT_RESOLUTIONS]).toEqual(['1K', '2K', '4K'])
+    expect(splatPictureProblems({ subject: 'environment', aspectRatio: '21:9', resolution: '4K' })).toEqual([])
+    expect(splatPictureProblems({ subject: 'environment', aspectRatio: '9:16' }).map((p) => p.code)).toEqual(['INVALID_OPTION'])
+    expect(splatPictureProblems({ subject: 'object', aspectRatio: '16:9', resolution: '2K' }).map((p) => p.code)).toEqual([
+      'OPTION_NOT_APPLICABLE',
+      'OPTION_NOT_APPLICABLE',
+    ])
+  })
+
+  it('asks for the picture the Studio asks for', () => {
+    expect(imageForPromptRequest('a misty forest', { subject: 'environment', aspectRatio: '21:9', resolution: '2K' })).toEqual({
+      method: 'POST',
+      path: '/2d/generate',
+      body: { prompt: 'a misty forest', for3D: true, subject: 'environment', aspectRatio: '21:9', resolution: '2K' },
+    })
+    expect(imageForPromptRequest('a misty forest', { subject: 'environment' }).body).toMatchObject({ aspectRatio: '16:9', resolution: '1K' })
+    expect(imageForPromptRequest('a red chair', { subject: 'object' }).body).toEqual({ prompt: 'a red chair', for3D: true })
+  })
+
+  it('cuts out only an object on Zetta Splat, and refuses the cut-out elsewhere', () => {
+    expect(codes({ imageUrl: IMG, removeBackground: true })).toEqual([])
+    expect(codes({ imageUrl: IMG, subject: 'environment', removeBackground: true })).toEqual(['CUT_OUT_NOT_OFFERED'])
+    expect(codes({ engine: 'zs2', imageUrl: IMG, removeBackground: true })).toEqual(['CUT_OUT_NOT_OFFERED'])
+    // Neither the subject nor the cut-out travels.
+    const request = ok({ imageUrl: IMG, subject: 'object', removeBackground: true }).request
+    expect(request).not.toHaveProperty('subject')
+    expect(request).not.toHaveProperty('removeBackground')
+  })
+
+  it('builds a place, not an object, from a video', () => {
+    expect(codes({ engine: 'zs2', videoUrl: VIDEO, subject: 'object' })).toEqual(['VIDEO_NEEDS_ENVIRONMENT'])
+    expect(codes({ engine: 'zs2', videoUrl: VIDEO, subject: 'environment' })).toEqual([])
   })
 })
 

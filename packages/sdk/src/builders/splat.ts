@@ -21,6 +21,7 @@ import {
   type WorldMeshVariant,
   type WorldSplatResolution,
 } from './common'
+import type { ImageAspectRatio, ImageResolution } from './prompts'
 
 export const SPLAT_ENGINE_IDS = ['n25', 'zs2', 'zs21'] as const
 export type SplatEngineId = (typeof SPLAT_ENGINE_IDS)[number]
@@ -79,7 +80,49 @@ export function maxWorldPictures(sameSpace: boolean): number {
   return sameSpace ? MAX_WORLD_PICTURES_SAME_SPACE : MAX_WORLD_PICTURES
 }
 
-export type SplatSubject = 'object' | 'environment'
+export const SPLAT_SUBJECTS = ['object', 'environment'] as const
+export type SplatSubject = (typeof SPLAT_SUBJECTS)[number]
+
+/** The frames an environment's picture can be made in, and its sizes. The Studio opens on 16:9 at 1K. */
+export const SPLAT_ASPECT_RATIOS = ['16:9', '21:9', '3:2', '4:3', '1:1'] as const satisfies readonly ImageAspectRatio[]
+export type SplatAspectRatio = (typeof SPLAT_ASPECT_RATIOS)[number]
+export const SPLAT_RESOLUTIONS = ['1K', '2K', '4K'] as const satisfies readonly ImageResolution[]
+export type SplatResolution = (typeof SPLAT_RESOLUTIONS)[number]
+
+/**
+ * The subject a prompt's picture is made for when none is named: an environment on the world
+ * engines, an object on Zetta Splat. (The Studio opens on object; it shows the choice.)
+ */
+export function defaultSplatSubject(engine: SplatEngineId): SplatSubject {
+  return SPLAT_ENGINES[engine].worldViews ? 'environment' : 'object'
+}
+
+/**
+ * Checks the frame for a picture made from a prompt: an environment takes a ratio and a size, an
+ * object is always the square frame the converter reads. Returns the problems, empty when fine.
+ */
+export function splatPictureProblems(options: {
+  subject: SplatSubject
+  aspectRatio?: string
+  resolution?: string
+}): Problem[] {
+  const problems: Problem[] = []
+  if (options.aspectRatio !== undefined) {
+    if (options.subject !== 'environment') {
+      problems.push(problem('OPTION_NOT_APPLICABLE', 'aspectRatio applies to an environment’s picture only. Remove it, or choose subject environment.', 'aspectRatio'))
+    } else {
+      checkEnum(problems, 'aspectRatio', options.aspectRatio, SPLAT_ASPECT_RATIOS)
+    }
+  }
+  if (options.resolution !== undefined) {
+    if (options.subject !== 'environment') {
+      problems.push(problem('OPTION_NOT_APPLICABLE', 'resolution applies to an environment’s picture only. Remove it, or choose subject environment.', 'resolution'))
+    } else {
+      checkEnum(problems, 'resolution', options.resolution, SPLAT_RESOLUTIONS)
+    }
+  }
+  return problems
+}
 
 /**
  * Whether the Studio cuts the picture out of its background before upload. Only an object on
@@ -98,6 +141,8 @@ export interface SplatInput extends RequestMetadata {
   engine?: SplatEngineId
   /** What the picture shows. Decides the picture made from a prompt and the cut-out; not sent. */
   subject?: SplatSubject
+  /** The picture's background is cut out first. Only an object on Zetta Splat; not sent. */
+  removeBackground?: boolean
   imageUrl?: string
   /** A world from a video instead of a picture (zs2, zs21). */
   videoUrl?: string
@@ -130,7 +175,17 @@ export function buildSplatRequest(input: SplatInput): BuildResult<CreateGenerati
   }
   const caps = SPLAT_ENGINES[engine]
   const label = caps.label
-  if (input.subject !== undefined) checkEnum(problems, 'subject', input.subject, ['object', 'environment'] as const)
+  const subjectOk = input.subject === undefined || checkEnum(problems, 'subject', input.subject, SPLAT_SUBJECTS)
+  const subject: SplatSubject = subjectOk && input.subject !== undefined ? input.subject : defaultSplatSubject(engine)
+  if (input.removeBackground === true && !splatOffersCutOut(engine, subject)) {
+    problems.push(
+      problem(
+        'CUT_OUT_NOT_OFFERED',
+        'Only an object on Zetta Splat is cut out of its background: an environment is all background, and a world engine rebuilds the whole place.',
+        'removeBackground',
+      ),
+    )
+  }
 
   const imageUrl = input.imageUrl?.trim() ?? ''
   const videoUrl = input.videoUrl?.trim() ?? ''
@@ -142,6 +197,10 @@ export function buildSplatRequest(input: SplatInput): BuildResult<CreateGenerati
   if (hasVideo && !caps.video) {
     problems.push(
       problem('VIDEO_NOT_SUPPORTED', 'A video can only build a Zetta Splat 2 or 2.1 world. Attach a picture instead.', 'videoUrl'),
+    )
+  } else if (hasVideo && input.subject === 'object') {
+    problems.push(
+      problem('VIDEO_NEEDS_ENVIRONMENT', 'A video builds a place, not an object. Choose subject environment, or attach a picture.', 'videoUrl'),
     )
   } else if (hasImage === hasVideo) {
     problems.push(

@@ -151,3 +151,91 @@ export function extensionFor(contentType: string): string {
   const map: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'model/gltf-binary': 'glb' }
   return map[contentType] ?? contentType.split('/').pop() ?? 'bin'
 }
+
+// ── Model imports ──────────────────────────────────────────────────────────
+
+/**
+ * The model formats the library imports, in the web Studio's order of preference: when several
+ * models are chosen together, the first format in this list is the model and the rest travel with it.
+ */
+export const MODEL_IMPORT_FORMATS = [
+  { ext: 'glb', label: 'GLB' },
+  { ext: 'gltf', label: 'glTF' },
+  { ext: 'fbx', label: 'FBX' },
+  { ext: 'obj', label: 'OBJ' },
+  { ext: 'stl', label: 'STL' },
+  { ext: 'ply', label: 'PLY' },
+  { ext: 'dae', label: 'Collada (DAE)' },
+  { ext: '3ds', label: '3DS' },
+  { ext: '3mf', label: '3MF' },
+  { ext: 'amf', label: 'AMF' },
+  { ext: 'usdz', label: 'USDZ' },
+  { ext: 'usd', label: 'USD' },
+  { ext: 'usda', label: 'USDA' },
+  { ext: 'usdc', label: 'USDC' },
+  { ext: 'wrl', label: 'VRML' },
+  { ext: 'lwo', label: 'LightWave (LWO)' },
+  { ext: 'kmz', label: 'KMZ' },
+] as const
+
+/** Extensions `POST /3d/uploads` takes with `application/octet-stream` (a GLB goes as `model/gltf-binary`). */
+export const UPLOADED_MODEL_EXTENSIONS = ['stl', 'fbx', 'obj', 'gltf', 'ply', 'dae', '3ds', '3mf', 'amf', 'usdz', 'usd', 'usda', 'usdc', 'wrl', 'lwo', 'kmz', 'zip'] as const
+export type UploadedModelExtension = (typeof UPLOADED_MODEL_EXTENSIONS)[number]
+
+/** Files that only travel alongside a model: materials, buffers, textures. */
+export const MODEL_COMPANION_EXTENSIONS = ['mtl', 'bin', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tga', 'tif', 'tiff', 'ktx2', 'dds'] as const
+
+/** The short list to show people. */
+export const MODEL_FORMAT_HINT = 'GLB, glTF, FBX, OBJ, STL, PLY, DAE, 3DS, 3MF, AMF, USD/USDA/USDC/USDZ, VRML (.wrl), LWO, KMZ, or a .zip of a model and its textures'
+
+/** The content type and extension to ask an upload ticket for. */
+export function modelUploadType(extension: string): { contentType: string; extension?: UploadedModelExtension } {
+  const ext = extension.toLowerCase().replace(/^\./, '')
+  if (ext === 'glb') return { contentType: 'model/gltf-binary' }
+  if ((UPLOADED_MODEL_EXTENSIONS as readonly string[]).includes(ext)) return { contentType: 'application/octet-stream', extension: ext as UploadedModelExtension }
+  throw new ZettaError({ code: LocalErrorCodes.UNSUPPORTED_FILE_TYPE, message: `.${ext || '?'} is not a model format the library imports. Import one of: ${MODEL_FORMAT_HINT}.` })
+}
+
+/** The lower-case extension of a file name or path, without the dot. */
+export function extensionOf(name: string): string {
+  const base = name.split(/[\\/]/).pop() ?? name
+  const dot = base.lastIndexOf('.')
+  return dot < 0 ? '' : base.slice(dot + 1).toLowerCase()
+}
+
+/** Whether a name is one of the importable model formats (not a zip or a companion). */
+export function isModelFile(name: string): boolean {
+  const ext = extensionOf(name)
+  return MODEL_IMPORT_FORMATS.some((format) => format.ext === ext)
+}
+
+/**
+ * The model among several file names, as the Studio picks it: one model per import, and when
+ * several are chosen the most complete format wins (a GLB over the FBX exported beside it).
+ */
+export function pickMainModel<T extends string | { name: string }>(files: readonly T[]): T | undefined {
+  const name = (file: T) => (typeof file === 'string' ? file : file.name)
+  const order = MODEL_IMPORT_FORMATS.map((format) => format.ext as string)
+  return files
+    .filter((file) => isModelFile(name(file)))
+    .sort((a, b) => order.indexOf(extensionOf(name(a))) - order.indexOf(extensionOf(name(b))))[0]
+}
+
+// ── Checksums ──────────────────────────────────────────────────────────────
+
+let CRC_TABLE: Uint32Array | undefined
+
+/** CRC-32 (IEEE), as zip and PNG use it. Pass the previous value to continue a running checksum. */
+export function crc32(bytes: Uint8Array, previous = 0): number {
+  if (!CRC_TABLE) {
+    CRC_TABLE = new Uint32Array(256)
+    for (let n = 0; n < 256; n++) {
+      let c = n
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+      CRC_TABLE[n] = c >>> 0
+    }
+  }
+  let crc = (previous ^ 0xffffffff) >>> 0
+  for (let i = 0; i < bytes.length; i++) crc = CRC_TABLE[(crc ^ bytes[i]!) & 0xff]! ^ (crc >>> 8)
+  return (crc ^ 0xffffffff) >>> 0
+}

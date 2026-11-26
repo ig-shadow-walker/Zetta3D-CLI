@@ -198,6 +198,8 @@ interface RunOpts {
   /** Pipe the script from curl like a user would (POSIX) instead of feeding it on stdin. */
   viaCurl?: boolean
   powershell?: string
+  /** Let the installer install the agent skill (off by default: on Windows HOME is the real one). */
+  skill?: boolean
 }
 
 function installerEnv(o: RunOpts): Record<string, string> {
@@ -215,6 +217,14 @@ function installerEnv(o: RunOpts): Record<string, string> {
   if (o.version) env.ZETTA_VERSION = o.version
   if (o.modifyPath === false || o.modifyPath === undefined) env.ZETTA_NO_MODIFY_PATH = '1'
   if (o.shell) env.SHELL = o.shell
+  env.ZETTA_NO_LOGIN = '1' // never start a browser sign-in from a test
+  if (o.skill) {
+    // The skill lands in the home folder: point every name for it at the temp one.
+    Object.assign(env, { HOME: home, USERPROFILE: home, APPDATA: join(home, 'AppData', 'Roaming'), ZETTA_CONFIG_DIR: join(home, '.zetta-config') })
+    delete env.ZETTA_NO_SKILL
+  } else {
+    env.ZETTA_NO_SKILL = '1'
+  }
   return env
 }
 
@@ -297,6 +307,21 @@ async function installerChecks(label: string, run: (o: RunOpts) => Promise<Run>,
     `[${label}] no network is reported clearly`,
     r.status !== 0 && /internet connection/i.test(output(r)) && sha256(bin) === before,
     output(r),
+  )
+}
+
+/** A fresh install teaches the agents it finds (here Claude Code and Codex) to use zetta. */
+async function skillCheck(label: string, run: (o: RunOpts) => Promise<Run>): Promise<void> {
+  const home = join(tmp, `home-skill-${label}`)
+  mkdirSync(join(home, '.claude'), { recursive: true })
+  mkdirSync(join(home, '.codex'), { recursive: true })
+  const r = await run({ dir: join(tmp, `inst-skill-${label}`, 'bin'), home, skill: true })
+  const claude = join(home, '.claude', 'skills', 'zetta3d', 'SKILL.md')
+  const agents = join(home, '.agents', 'skills', 'zetta3d', 'references', 'commands.md')
+  check(
+    `[${label}] installs the agent skill for Claude Code and Codex, and says so`,
+    r.status === 0 && existsSync(claude) && existsSync(agents) && /Installed the Zetta 3D skill/.test(output(r)),
+    `exit ${r.status}\n${output(r)}\nclaude: ${existsSync(claude)} · agents: ${existsSync(agents)}`,
   )
 }
 
@@ -411,6 +436,7 @@ try {
     const shells = ['pwsh', 'powershell'].filter(has)
     if (shells.length === 0) check('PowerShell is available', false, 'neither pwsh nor powershell found')
     for (const ps of shells) await installerChecks(ps, (o) => runInstaller({ ...o, powershell: ps }), false)
+    if (realCli && shells[0]) await skillCheck(shells[0], (o) => runInstaller({ ...o, powershell: shells[0] }))
     if (realCli) await upgradeCheck()
   } else {
     if (has('curl')) {
@@ -419,6 +445,7 @@ try {
       check('[curl | sh] `curl -fsSL <host>/install.sh | sh` installs a working zetta', r.status === 0 && versionOf(installed(dir)).ok, output(r))
     }
     await installerChecks('sh', runInstaller, false)
+    if (realCli) await skillCheck('sh', runInstaller)
     for (const sh of ['dash', 'bash', 'ksh', 'busybox']) {
       if (!has(sh)) continue
       const dir = join(tmp, `inst-${sh}`, 'bin')

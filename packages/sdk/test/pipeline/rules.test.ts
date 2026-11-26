@@ -9,6 +9,7 @@ import {
   incomingType,
   outputType,
   parseGraph,
+  perRunIn,
   problemFromServer,
   runInputProblems,
   seedType,
@@ -98,19 +99,55 @@ describe('validateGraph — the backend’s pipeline-graph.spec vectors', () => 
     expect(codes(looped)).toEqual(expect.arrayContaining(['CYCLE', 'INPUT_TAKEN']))
   })
 
-  it('takes several views into a generation, and an isolated part anywhere a picture goes', () => {
+  it('takes several views into a multi-view generation, and an isolated part anywhere a picture goes', () => {
     const graph: PipelineGraph = {
       version: 1,
       nodes: [
         node('seed', 'seed_picture', { gen2dPostId: 3 }),
         node('iso', 'isolate_parts'),
         node('views', 'draw_views'),
-        node('gen', 'generate_3d', { model: 'n25', spec: { generation: { base: 'textured' } } }),
+        node('gen', 'generate_3d_multiview', { model: 'n25', spec: { generation: { base: 'textured' } } }),
         node('sword', 'generate_3d', { model: 'n25', spec: { generation: { base: 'textured' } } }),
       ],
       edges: [edge('seed', 'iso'), edge('iso', 'views', 'character'), edge('views', 'gen'), edge('iso', 'sword', 'part:sword')],
     }
     expect(validateGraph(graph)).toEqual([])
+  })
+
+  it('refuses views into a one-picture generation, and one picture into a multi-view one, naming the step to use', () => {
+    const gen = { model: 'n25', spec: { generation: { base: 'textured' } } }
+    const graph: PipelineGraph = {
+      version: 1,
+      nodes: [
+        node('seed', 'seed_views', { views: [{ viewType: 'front', uploadKey: 'inputImg/7/f.png' }] }),
+        node('one', 'generate_3d', gen),
+        node('smart', 'generate_smart_3d', { ...gen, model: 'np1' }),
+        node('pic', 'seed_picture'),
+        node('many', 'generate_3d_multiview', gen),
+      ],
+      edges: [edge('seed', 'one'), edge('seed', 'smart'), edge('pic', 'many')],
+    }
+    const found = validateGraph(graph).filter((problem) => problem.code === 'PORT_MISMATCH')
+    expect(found).toEqual([
+      { code: 'PORT_MISMATCH', nodeId: 'one', message: 'Generate 3D takes one picture. For pictures of each side, use Multi-view - Generate 3D.' },
+      { code: 'PORT_MISMATCH', nodeId: 'smart', message: 'Generate Smart 3D takes one picture. For pictures of each side, use Multi-view - Smart 3D.' },
+      {
+        code: 'PORT_MISMATCH',
+        nodeId: 'many',
+        message: 'Multi-view - Generate 3D takes pictures of each side — connect a Multi-view seed or Draw views, or use Generate 3D for one picture.',
+      },
+    ])
+    expect(canConnect(graph, { source: 'seed', sourceHandle: 'out', target: 'one', targetHandle: 'in' })).toBe(false)
+    expect(canConnect(graph, { source: 'pic', sourceHandle: 'out', target: 'one', targetHandle: 'in' })).toBe(true)
+  })
+
+  it('asks a Multi-view seed for its front when the graph’s own seed is used', () => {
+    const graph = (views: unknown): PipelineGraph => ({ version: 1, nodes: [node('seed', 'seed_views', { views })], edges: [] })
+    expect(validateGraph(graph([{ viewType: 'back', uploadKey: 'inputImg/7/b.png' }]), { requireSeedAsset: true })).toEqual([
+      { code: 'SEED_NOT_CHOSEN', nodeId: 'seed', message: 'Choose the pictures this run starts from — a front one at least.' },
+    ])
+    expect(validateGraph(graph([{ viewType: 'front', gen2dPostId: 4 }]), { requireSeedAsset: true })).toEqual([])
+    expect(validateGraph(graph(undefined))).toEqual([])
   })
 })
 
@@ -255,6 +292,28 @@ describe('runInputProblems — what a run needs before it can start', () => {
     }
     expect(runInputProblems(fromSettings)).toEqual([])
   })
+
+  it('asks Multi-view - AI texturing for its front — unless views are wired in — and says it is set on each run', () => {
+    const graph = (views: Record<string, unknown>, wired = false): PipelineGraph => ({
+      version: 1,
+      nodes: [withSettings('mv', 'seed_views'), withSettings('tex', 'texture_multiview', { ...defaultSettings('texture_multiview'), referenceViews: views })],
+      edges: wired ? [edge('mv', 'tex', 'out', 'views')] : [],
+    })
+    expect(runInputProblems(graph({ back: { uploadKey: 'inputImg/7/b.png' } }))).toEqual([
+      {
+        code: 'VIEWS_INPUT_MISSING',
+        nodeId: 'tex',
+        field: 'views',
+        message: 'Multi-view - AI texturing: add the pictures of each side — a front one at least.',
+      },
+    ])
+    expect(runInputProblems(graph({ front: { uploadKey: 'inputImg/7/f.png' } }))).toEqual([])
+    expect(runInputProblems(graph({}, true))).toEqual([])
+    const wired = graph({}, true)
+    expect(perRunIn(wired, wired.nodes[1]!)).toBe(false)
+    const unwired = graph({})
+    expect(perRunIn(unwired, unwired.nodes[1]!)).toBe(true)
+  })
 })
 
 describe('graph helpers', () => {
@@ -346,7 +405,7 @@ describe('graphWarnings', () => {
       nodes: [
         withSettings('seed', 'seed_picture'),
         withSettings('views', 'draw_views', { views: [] }),
-        withSettings('gen', 'generate_3d', { ...defaultSettings('generate_3d'), polygonCount: '100000' }),
+        withSettings('gen', 'generate_3d_multiview', { ...defaultSettings('generate_3d_multiview'), polygonCount: '100000' }),
         withSettings('uv', 'smart_uv'),
       ],
       edges: [edge('seed', 'views'), edge('views', 'gen'), edge('gen', 'uv')],
@@ -355,18 +414,40 @@ describe('graphWarnings', () => {
     expect(problems).toEqual([])
     expect(warnings.map((warning) => warning.code)).toEqual(['NO_VIEWS', 'SMART_UV_TRIANGLES'])
     expect(warnings[1]!.message).toBe(
-      'Generate 3d can make about 100,000 triangles — over Smart UV’s 80,000. Add Retopology before it, or lower the polygon count.',
+      'Generate 3d multiview can make about 100,000 triangles — over Smart UV’s 80,000. Add Retopology before it, or lower the polygon count.',
     )
+  })
+
+  it('says when a step still names the retired Zetta N1, and never refuses it', () => {
+    const graph: PipelineGraph = {
+      version: 1,
+      nodes: [
+        withSettings('seed', 'seed_picture'),
+        withSettings('gen', 'generate_3d', { ...defaultSettings('generate_3d'), model: 'n1' }),
+        withSettings('topo', 'retopology', { ...defaultSettings('retopology'), engine: 'n1' }),
+      ],
+      edges: [edge('seed', 'gen'), edge('gen', 'topo')],
+    }
+    const { problems, warnings } = checkGraph(graph)
+    expect(problems).toEqual([])
+    expect(warnings.map((warning) => [warning.code, warning.nodeId])).toEqual([
+      ['ENGINE_RETIRED', 'gen'],
+      ['ENGINE_RETIRED', 'topo'],
+    ])
+    expect(warnings[0]!.message).toMatch(/fails when it runs/)
+    expect(warnings[1]!.message).toMatch(/runs on Zetta R1/)
   })
 })
 
 describe('seeds', () => {
   const picture: PipelineGraph = { version: 1, nodes: [withSettings('seed', 'seed_picture')], edges: [] }
   const model: PipelineGraph = { version: 1, nodes: [withSettings('seed', 'seed_model')], edges: [] }
+  const views: PipelineGraph = { version: 1, nodes: [withSettings('seed', 'seed_views')], edges: [] }
 
   it('knows what a pipeline starts from', () => {
     expect(seedType(picture)).toBe('picture')
     expect(seedType(model)).toBe('model')
+    expect(seedType(views)).toBe('views')
     expect(seedType({ version: 1, nodes: [], edges: [] })).toBeNull()
   })
 
@@ -378,6 +459,18 @@ describe('seeds', () => {
     ])
     expect(validateSeeds(model, [])[0]!.code).toBe('SEEDS_COUNT')
     expect(validateSeeds(model, Array.from({ length: 21 }, () => ({ gen3dPostId: 1 })))[0]!.code).toBe('SEEDS_COUNT')
+  })
+
+  it('takes sets of pictures of each side for a multi-view pipeline — the front in each', () => {
+    const front = { viewType: 'front', uploadKey: 'inputImg/7/f.png', name: 'f.png' }
+    expect(validateSeeds(views, [{ views: [front, { viewType: 'back', gen2dPostId: 4 }], name: 'chair' }, { views: [front] }])).toEqual([])
+    const messages = (seeds: unknown[]) => validateSeeds(views, seeds).map((problem) => problem.message)
+    expect(messages([{ views: [{ viewType: 'back', uploadKey: 'inputImg/7/b.png' }] }])).toEqual(['Seed 1: a front picture is required.'])
+    expect(messages([{ views: [front, { viewType: 'top', uploadKey: 'x' }] }])).toEqual(['Seed 1: each view is one of front, back, left, right.'])
+    expect(messages([{ views: [front, front] }])).toEqual(['Seed 1: the front picture is given twice.'])
+    expect(messages([{ views: [{ viewType: 'front' }] }])).toEqual(['Seed 1: the front picture needs an uploadKey or a gen2dPostId.'])
+    expect(messages([{ uploadKey: 'inputImg/7/a.png' }])[0]).toMatch(/^Seed 1: a multi-view pipeline takes \{ views/)
+    expect(validateSeeds(picture, [{ views: [front] }])[0]!.code).toBe('SEED_INVALID')
   })
 
   it('splits a long list into batches of 20', () => {
@@ -393,6 +486,13 @@ describe('problemFromServer', () => {
     ['Choose the picture this pipeline starts from.', 'SEED_NOT_CHOSEN'],
     ['Gild it: say how to change the picture.', 'AI_EDIT_PROMPT_MISSING'],
     ['AI texturing: describe the texture or add a reference picture.', 'TEXTURE_INPUT_MISSING'],
+    ['Multi-view - AI texturing: add the pictures of each side — a front one at least.', 'VIEWS_INPUT_MISSING'],
+    ['Choose the pictures this run starts from — a front one at least.', 'SEED_NOT_CHOSEN'],
+    ['Generate 3D takes one picture. For pictures of each side, use Multi-view - Generate 3D.', 'PORT_MISMATCH'],
+    [
+      'Multi-view - Smart 3D takes pictures of each side — connect a Multi-view seed or Draw views, or use Generate Smart 3D for one picture.',
+      'PORT_MISMATCH',
+    ],
     ['Something new.', 'SERVER_PROBLEM'],
   ])('reads %p as %s', (message, code) => {
     expect(problemFromServer({ nodeId: 'x', message })).toEqual({ code, nodeId: 'x', message })
@@ -418,6 +518,33 @@ describe('parseGraph — as the server reads untrusted JSON', () => {
     })
     expect(parsed.nodes).toEqual([{ id: 'a', kind: 'export', position: { x: 3, y: 0 }, request: { format: 'glb' } }])
     expect(parsed.edges).toEqual([{ id: 'e0', source: 'a', sourceHandle: 'out', target: 'b', targetHandle: 'in' }])
+  })
+
+  it('makes a generation fed views its multi-view step, and the old multi-view AI texturing its own step', () => {
+    const parsed = parseGraph({
+      nodes: [
+        { id: 'seed', kind: 'seed_views' },
+        { id: 'one', kind: 'generate_3d', settings: { model: 'n25' } },
+        { id: 'smart', kind: 'generate_smart_3d' },
+        { id: 'pic', kind: 'seed_picture' },
+        { id: 'stays', kind: 'generate_3d' },
+        { id: 'tex', kind: 'texture', settings: { referenceMode: 'multi-view' } },
+      ],
+      edges: [
+        { source: 'seed', target: 'one' },
+        { source: 'seed', target: 'smart' },
+        { source: 'pic', target: 'stays' },
+      ],
+    })
+    expect(Object.fromEntries(parsed.nodes.map((n) => [n.id, n.kind]))).toEqual({
+      seed: 'seed_views',
+      one: 'generate_3d_multiview',
+      smart: 'generate_smart_3d_multiview',
+      pic: 'seed_picture',
+      stays: 'generate_3d',
+      tex: 'texture_multiview',
+    })
+    expect(parsed.nodes[1]!.settings).toEqual({ model: 'n25' })
   })
 
   it('cuts ids and labels to length', () => {

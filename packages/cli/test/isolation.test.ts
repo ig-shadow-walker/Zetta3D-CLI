@@ -17,7 +17,7 @@ describe('the CLI does not repeat upstream details', () => {
       [`GET ${API}/2d/models`, { json: { models: [{ id: UPSTREAM_ID, label: 'Pro', resolutions: ['1K', '2K'] }], default: UPSTREAM_ID } }],
       [`POST ${API}/2d/generate`, { json: { postId: 9, images: [{ base64: Buffer.from('png').toString('base64'), contentType: 'image/png', bytes: 3 }], text: null, model: UPSTREAM_ID } }],
     ])
-    const run = await zetta(['image', 'generate', '-p', 'a lamp', '--engine', 'pro', '--out', dir], { fetch, env: { ZETTA_TOKEN: tokenFor() } })
+    const run = await zetta(['image', 'generate', '-p', 'a lamp', '--engine', 'pro', '--out', dir], { fetch, env: { ZETTA_TEST_SIGN_IN: tokenFor() } })
     expect(run.code).toBe(0)
     expect(run.stdout).not.toContain(UPSTREAM_ID)
     expect(existsSync(run.json().files[0].path)).toBe(true)
@@ -26,14 +26,14 @@ describe('the CLI does not repeat upstream details', () => {
 
   it('image engines are listed by label only', async () => {
     const { fetch } = fakeFetch([[`GET ${API}/2d/models`, { json: { models: [{ id: UPSTREAM_ID, label: 'Flash', resolutions: ['1K'] }], default: UPSTREAM_ID } }]])
-    const run = await zetta(['catalog', 'engines', '--images'], { fetch, env: { ZETTA_TOKEN: tokenFor() } })
+    const run = await zetta(['catalog', 'engines', '--images'], { fetch, env: { ZETTA_TEST_SIGN_IN: tokenFor() } })
     expect(run.stdout).not.toContain(UPSTREAM_ID)
     expect(run.json().imageEngines[0].name).toBe('flash')
   })
 
   it('usage history leaves out refund reasons', async () => {
     const { fetch } = fakeFetch([[`GET ${API}/billing/usage`, { json: { entries: [{ id: 1, meter: 'three_d_credit', entryType: 'refund', bucket: 'monthly', operationType: 'textured', amount: 50, subjectType: 'gen3d_post', subjectId: 7, reason: UPSTREAM_CODE, userPaymentPlan: 'creator', createdAt: '2026-10-20T00:00:00Z' }], nextCursor: null } }]])
-    const run = await zetta(['account', 'usage'], { fetch, env: { ZETTA_TOKEN: tokenFor() } })
+    const run = await zetta(['account', 'usage'], { fetch, env: { ZETTA_TEST_SIGN_IN: tokenFor() } })
     expect(run.code).toBe(0)
     expect(run.stdout).not.toContain(UPSTREAM_CODE)
     expect(run.json().entries[0]).toMatchObject({ type: 'refund', amount: 50, subject: 'gen3d_post:7' })
@@ -54,7 +54,7 @@ describe('the CLI does not repeat upstream details', () => {
       [`POST ${API}/3d/quote`, { json: { credits: 10, lines: [] } }],
       [`POST ${API}/3d/generations`, { status: 409, json: { code: 'JOB_LIMIT_REACHED', message: 'Too many jobs running.', category: 'acme_series', scope: 'category', limit: 1, running: 1, plan: 'free', upgradeTo: 'basic', upgradeLimit: 3 } }],
     ])
-    const run = await zetta(['generate', '-p', 'a cup', '--yes'], { fetch, env: { ZETTA_TOKEN: tokenFor() } })
+    const run = await zetta(['generate', '--image', 'https://files.example/cup.png', '--yes'], { fetch, env: { ZETTA_TEST_SIGN_IN: tokenFor() } })
     expect(run.code).toBe(7)
     expect(run.stderr).not.toContain('acme_series')
     expect(run.errorJson().error.details).toMatchObject({ limit: 1, upgradeTo: 'basic' })

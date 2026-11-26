@@ -55,9 +55,13 @@ Options:
   --outdir <dir>      output folder (default: dist)
   --skip-smoke        do not test-run this machine's binary after building
   --collect           only copy the binaries in dist/v<version>/ into release/ again (after signing them)
-  --upload            then publish the builds to the storage bucket under zcli/: zcli/macosx/zetta-darwin-arm64,
-                      zcli/windows/zetta-windows-x64.exe, zcli/linux/…, and, once every platform is built,
-                      the files the one-line installers read (needs the SPACES_* settings; docs/releasing.md)
+  --upload            then publish the builds to the storage bucket, in SPACES_FOLDER (default zcli/):
+                      zcli/macosx/zetta-darwin-arm64, zcli/windows/zetta-windows-x64.exe, zcli/linux/…, and, once
+                      every platform is built, the files the installers and zetta upgrade read. The builds carry
+                      the bucket's address, so installed copies find new versions there (SPACES_* settings;
+                      docs/releasing.md)
+  --download-base <u> the address installed copies look for new versions at (default with --upload: the
+                      bucket folder's public address, or ZETTA_PUBLIC_BASE)
   --list              list every target and where it goes
   -h, --help          show this help`
 
@@ -160,6 +164,7 @@ async function main(): Promise<void> {
         'skip-smoke': { type: 'boolean', default: false },
         collect: { type: 'boolean', default: false },
         upload: { type: 'boolean', default: false },
+        'download-base': { type: 'string' },
         list: { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
       },
@@ -174,7 +179,7 @@ async function main(): Promise<void> {
     console.log(`  ${'target'.padEnd(26)} ${'built into'.padEnd(40)} uploaded to (--upload)`)
     for (const key of KEYS) {
       const local = `release/${platformFolder(key)}/${shortName(key)}`
-      console.log(`  ${key.padEnd(26)} ${local.padEnd(40)} ${storageKey(key)}${key === platformKey() ? '   (this machine)' : ''}`)
+      console.log(`  ${key.padEnd(26)} ${local.padEnd(40)} ${storageKey(key, process.env.SPACES_FOLDER?.trim() || undefined)}${key === platformKey() ? '   (this machine)' : ''}`)
     }
     return
   }
@@ -207,6 +212,12 @@ async function main(): Promise<void> {
       console.error(`build: ${(error as Error).message}`)
       process.exit(2)
     }
+  }
+  // Builds that are published carry the address they are published to, so installed copies find updates.
+  const downloadBase = values['download-base']?.replace(/\/+$/, '') ?? storage?.downloadBase
+  if (downloadBase && !/^https?:\/\//.test(downloadBase)) {
+    console.error(`build: --download-base must be an http(s) address, not "${downloadBase}".`)
+    process.exit(2)
   }
 
   if (values.collect) {
@@ -241,6 +252,7 @@ async function main(): Promise<void> {
       '--outdir',
       values.outdir,
       ...(values['skip-smoke'] ? ['--skip-smoke'] : []),
+      ...(downloadBase ? ['--download-base', downloadBase] : []),
     ],
   )
 
@@ -261,6 +273,8 @@ async function upload(storage: SpacesConfig, version: string, versionDir: string
     versionDir,
     latestJson: join(versionDir, '..', 'latest.json'),
     installDir: join(ROOT, 'install'),
+    folder: storage.folder,
+    downloadBase: storage.downloadBase,
     keys,
     releaseKeys: RELEASE_KEYS,
   })
@@ -268,7 +282,7 @@ async function upload(storage: SpacesConfig, version: string, versionDir: string
     console.error(`\nbuild: nothing to upload. ${plan.note ?? ''}`)
     process.exit(1)
   }
-  console.log(`\n▸ Publish ${plan.objects.length} files to the ${storage.bucket} bucket under zcli/ (public, replacing what is there)`)
+  console.log(`\n▸ Publish ${plan.objects.length} files to the ${storage.bucket} bucket under ${storage.folder}/ (public, replacing what is there)`)
   try {
     await uploadObjects(plan.objects, storage, (line) => console.log(line))
   } catch (error) {
@@ -277,8 +291,8 @@ async function upload(storage: SpacesConfig, version: string, versionDir: string
     process.exit(1)
   }
   console.log('\nPublished:')
-  for (const key of keys) if (plan.objects.some((o) => o.key === storageKey(key))) console.log(`  ${storage.publicBase}/${storageKey(key)}`)
-  if (plan.installers) console.log(`  ${storage.publicBase}/zcli/latest.json now points at ${version}; the one-line installers install it.`)
+  for (const key of keys) if (plan.objects.some((o) => o.key === storageKey(key, storage.folder))) console.log(`  ${storage.publicBase}/${storageKey(key, storage.folder)}`)
+  if (plan.installers) console.log(`  ${storage.downloadBase}/latest.json now points at ${version}; installers and \`zetta upgrade\` install it.`)
   if (plan.note) console.log(`\nNote: ${plan.note}`)
 }
 

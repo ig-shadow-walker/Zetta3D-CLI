@@ -15,7 +15,7 @@ import {
   DEFAULT_TEXTURE_SETTINGS,
   isKnownRigSpec,
 } from './tool-settings'
-import type { NodeKind, PipelineNode } from './types'
+import { VIEW_TYPES, type NodeKind, type PipelineNode } from './types'
 
 type Settings = Record<string, unknown>
 
@@ -25,6 +25,7 @@ export function defaultSettings(kind: string): Settings {
     case 'seed_picture':
       return { source: null }
     case 'seed_model':
+    case 'seed_views':
       return {}
     case 'ai_edit':
       return { prompt: '', model: null, for3D: true }
@@ -33,10 +34,12 @@ export function defaultSettings(kind: string): Settings {
     case 'isolate_parts':
       return { ...DEFAULT_ISOLATE_SETTINGS, extraParts: [] }
     case 'generate_3d':
+    case 'generate_3d_multiview':
       // A spread, not a patch: the count stays the form's 200,000, which reads as a custom count on
       // Zetta N2.5 — exactly as a new node in the web editor does.
       return { ...DEFAULT_FORM, model: 'n25' }
     case 'generate_smart_3d':
+    case 'generate_smart_3d_multiview':
       return { ...applyFormPatch({ ...DEFAULT_FORM }, { model: 'np1' }) }
     case 'generate_splat':
       return { ...DEFAULT_SPLAT_SETTINGS, title: '' }
@@ -48,6 +51,8 @@ export function defaultSettings(kind: string): Settings {
       return { ...DEFAULT_SEGMENT_SETTINGS, mode: 'smart' }
     case 'texture':
       return { ...DEFAULT_TEXTURE_SETTINGS, prompt: '' }
+    case 'texture_multiview':
+      return { ...DEFAULT_TEXTURE_SETTINGS, prompt: '', referenceViews: {} }
     case 'smart_uv':
       return { ...DEFAULT_SMART_UV_SETTINGS }
     case 'rigging':
@@ -59,8 +64,11 @@ export function defaultSettings(kind: string): Settings {
   }
 }
 
-export function isGenerateKind(kind: string): kind is 'generate_3d' | 'generate_smart_3d' {
-  return kind === 'generate_3d' || kind === 'generate_smart_3d'
+/** The four generate steps, which share the Studio's Generate form. */
+export function isGenerateKind(
+  kind: string,
+): kind is 'generate_3d' | 'generate_smart_3d' | 'generate_3d_multiview' | 'generate_smart_3d_multiview' {
+  return kind === 'generate_3d' || kind === 'generate_smart_3d' || kind === 'generate_3d_multiview' || kind === 'generate_smart_3d_multiview'
 }
 
 /**
@@ -100,15 +108,53 @@ function choiceForRaw(spec: SettingSpec, raw: unknown): SettingChoice | null {
   return spec.choices?.find((choice) => (choice.raw ?? choice.value) === raw) ?? null
 }
 
-/** The friendly values a choice setting takes. */
+/** The friendly values a choice setting offers (a retired engine is still read, but not offered). */
 export function choiceValues(spec: SettingSpec): string[] {
-  return (spec.choices ?? []).map((choice) => choice.value)
+  return (spec.choices ?? []).filter((choice) => !choice.retired).map((choice) => choice.value)
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
 export type ValueResult = { ok: true; value: unknown } | { ok: false; message: string }
+
+/** A picture given in a document or on the command line, as the graph stores it, or null when it is not one. */
+function pictureValue(value: unknown, extra: readonly string[] = []): Record<string, unknown> | null {
+  if (!isRecord(value)) return null
+  const keys = Object.keys(value)
+  const allowed = (key: string, own: string) => key === own || key === 'name' || extra.includes(key)
+  if (value.name !== undefined && typeof value.name !== 'string') return null
+  const name = typeof value.name === 'string' ? { name: value.name } : {}
+  if (typeof value.uploadKey === 'string' && value.uploadKey !== '') {
+    return keys.every((key) => allowed(key, 'uploadKey')) ? { uploadKey: value.uploadKey, ...name } : null
+  }
+  if (typeof value.gen2dPostId === 'number' && Number.isInteger(value.gen2dPostId) && value.gen2dPostId > 0) {
+    return keys.every((key) => allowed(key, 'gen2dPostId')) ? { gen2dPostId: value.gen2dPostId, ...name } : null
+  }
+  return null
+}
+
+/**
+ * Pictures of each side as the editor stores them (`{ front: { uploadKey, name? }, back: … }`) —
+ * known sides only, each a picture, the front required unless the set is empty (none given).
+ */
+function viewSetValue(spec: SettingSpec, value: unknown, stored: boolean): ValueResult {
+  const shape = `${spec.name} is { front: picture, back?, left?, right? } — each { uploadKey, name? } or { gen2dPostId } — with a front.`
+  if (!isRecord(value)) return { ok: false, message: shape }
+  const out: Record<string, unknown> = {}
+  for (const [side, picture] of Object.entries(value)) {
+    if (!(VIEW_TYPES as readonly string[]).includes(side)) {
+      return { ok: false, message: `${spec.name} names sides ${VIEW_TYPES.join(', ')} only.` }
+    }
+    // The editor keeps a preview next to each picture; it is never sent, and never written in a document.
+    const parsed = pictureValue(picture, stored ? ['thumbnail'] : [])
+    if (!parsed) return { ok: false, message: shape }
+    out[side] = parsed
+  }
+  if (Object.keys(out).length && !out.front) return { ok: false, message: `${spec.name} needs a front picture.` }
+  // In the slots' order, as the editor keeps them.
+  return { ok: true, value: Object.fromEntries(VIEW_TYPES.filter((side) => side in out).map((side) => [side, out[side]])) }
+}
 
 /**
  * A friendly value as the graph stores it, or why it is not one this setting takes. Messages never
@@ -168,20 +214,11 @@ export function toRawValue(spec: SettingSpec, value: unknown): ValueResult {
       return { ok: true, value: [...value] }
     }
     case 'picture': {
-      const shape = `${spec.name} must be { uploadKey, name? } or { gen2dPostId }.`
-      if (!isRecord(value)) return { ok: false, message: shape }
-      const keys = Object.keys(value)
-      if (typeof value.uploadKey === 'string' && value.uploadKey !== '') {
-        if (keys.some((key) => key !== 'uploadKey' && key !== 'name')) return { ok: false, message: shape }
-        if (value.name !== undefined && typeof value.name !== 'string') return { ok: false, message: shape }
-        return { ok: true, value: { uploadKey: value.uploadKey, ...(typeof value.name === 'string' ? { name: value.name } : {}) } }
-      }
-      if (typeof value.gen2dPostId === 'number' && Number.isInteger(value.gen2dPostId) && value.gen2dPostId > 0) {
-        if (keys.some((key) => key !== 'gen2dPostId' && key !== 'name')) return { ok: false, message: shape }
-        return { ok: true, value: { gen2dPostId: value.gen2dPostId, ...(typeof value.name === 'string' ? { name: value.name } : {}) } }
-      }
-      return { ok: false, message: shape }
+      const picture = pictureValue(value)
+      return picture ? { ok: true, value: picture } : { ok: false, message: `${spec.name} must be { uploadKey, name? } or { gen2dPostId }.` }
     }
+    case 'view-set':
+      return viewSetValue(spec, value, false)
   }
 }
 
@@ -228,6 +265,10 @@ export function toFriendlyValue(spec: SettingSpec, raw: unknown): { value: unkno
         return { value: { gen2dPostId: raw.gen2dPostId, ...(typeof raw.name === 'string' ? { name: raw.name } : {}) } }
       }
       return null
+    }
+    case 'view-set': {
+      const read = viewSetValue(spec, raw, true)
+      return read.ok ? { value: read.value } : null
     }
   }
 }

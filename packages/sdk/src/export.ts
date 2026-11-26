@@ -1,4 +1,6 @@
 import { ZettaError } from './errors'
+import { crc32, detectFile } from './files'
+import type { TextureMapKind } from './resources/images'
 
 /**
  * Free, local conversion of a GLB into OBJ (+ MTL and textures) or binary STL.
@@ -8,6 +10,29 @@ import { ZettaError } from './errors'
  * Compressed meshes (Draco, meshopt) are refused with a clear error — convert those on the server.
  */
 
+interface TextureInfo {
+  index: number
+  texCoord?: number
+  scale?: number
+  strength?: number
+  extensions?: Record<string, unknown>
+}
+
+interface GltfMaterial {
+  name?: string
+  pbrMetallicRoughness?: {
+    baseColorFactor?: number[]
+    baseColorTexture?: TextureInfo
+    metallicFactor?: number
+    roughnessFactor?: number
+    metallicRoughnessTexture?: TextureInfo
+  }
+  normalTexture?: TextureInfo
+  occlusionTexture?: TextureInfo
+  emissiveTexture?: TextureInfo
+  emissiveFactor?: number[]
+}
+
 interface GltfJson {
   asset?: { version?: string }
   scene?: number
@@ -16,10 +41,12 @@ interface GltfJson {
   meshes?: Array<{ name?: string; primitives: Array<{ attributes: Record<string, number>; indices?: number; material?: number; mode?: number }> }>
   accessors?: Array<{ bufferView?: number; byteOffset?: number; componentType: number; count: number; type: string; normalized?: boolean }>
   bufferViews?: Array<{ buffer: number; byteOffset?: number; byteLength: number; byteStride?: number }>
-  materials?: Array<{ name?: string; pbrMetallicRoughness?: { baseColorFactor?: number[]; baseColorTexture?: { index: number } } }>
-  textures?: Array<{ source?: number }>
+  buffers?: Array<{ byteLength: number; uri?: string }>
+  materials?: GltfMaterial[]
+  textures?: Array<{ source?: number; sampler?: number; extensions?: Record<string, { source?: number }> }>
   images?: Array<{ bufferView?: number; mimeType?: string; name?: string; uri?: string }>
   extensionsRequired?: string[]
+  extensionsUsed?: string[]
 }
 
 export interface ParsedGlb {
@@ -35,7 +62,8 @@ export interface ExportedFile {
 const COMPONENTS: Record<string, number> = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 }
 const COMPONENT_BYTES: Record<number, number> = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 }
 
-export function parseGlb(data: Uint8Array): ParsedGlb {
+/** `geometry: false` reads a GLB for its materials and textures only, so compressed meshes are fine. */
+export function parseGlb(data: Uint8Array, options: { geometry?: boolean } = {}): ParsedGlb {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
   if (data.length < 20 || view.getUint32(0, true) !== 0x46546c67) {
     throw new ZettaError({ code: 'UNSUPPORTED_FILE_TYPE', message: 'Not a GLB file.' })
@@ -53,7 +81,7 @@ export function parseGlb(data: Uint8Array): ParsedGlb {
   }
   if (!json) throw new ZettaError({ code: 'UNSUPPORTED_FILE_TYPE', message: 'The GLB has no JSON chunk.' })
   const compressed = (json.extensionsRequired ?? []).filter((ext) => /draco|meshopt|quantization/i.test(ext))
-  if (compressed.length) {
+  if (compressed.length && options.geometry !== false) {
     throw new ZettaError({
       code: 'UNSUPPORTED_FILE_TYPE',
       message: `This model uses compressed geometry (${compressed.join(', ')}), which local export cannot read. Convert it on the server with \`zetta refine convert\`.`,
@@ -270,7 +298,41 @@ export interface MaterialInfo {
   /** Base colour factor, RGBA in 0–1. */
   color: [number, number, number, number]
   /** The embedded base-colour picture, as stored (PNG, JPEG or WebP bytes). */
-  texture?: { bytes: Uint8Array; mimeType: string; extension: string }
+  texture?: {
+    bytes: Uint8Array
+    mimeType: string
+    extension: string
+    /** The glTF image it comes from; materials sharing a picture share this. */
+    image: number
+    width?: number
+    height?: number
+  }
+}
+
+/** The glTF image a texture shows (its own source, or a WebP/Basis extension's). */
+function textureSource(json: GltfJson, textureIndex: number | undefined): number | undefined {
+  if (textureIndex === undefined) return undefined
+  const texture = json.textures?.[textureIndex]
+  if (!texture) return undefined
+  if (texture.source !== undefined) return texture.source
+  return Object.values(texture.extensions ?? {}).find((ext) => typeof ext?.source === 'number')?.source
+}
+
+/** The bytes of an embedded image, with its type (from the GLB, or sniffed from the bytes). */
+function imageBytes(glb: ParsedGlb, imageIndex: number): { bytes: Uint8Array; mimeType: string } | undefined {
+  const image = glb.json.images?.[imageIndex]
+  if (!image) return undefined
+  let bytes: Uint8Array | undefined
+  if (image.bufferView !== undefined) {
+    const view = glb.json.bufferViews?.[image.bufferView]
+    if (!view) return undefined
+    bytes = glb.bin.slice(view.byteOffset ?? 0, (view.byteOffset ?? 0) + view.byteLength)
+  } else if (image.uri?.startsWith('data:')) {
+    const comma = image.uri.indexOf(',')
+    bytes = Uint8Array.from(atob(image.uri.slice(comma + 1)), (c) => c.charCodeAt(0))
+  }
+  if (!bytes) return undefined
+  return { bytes, mimeType: image.mimeType ?? detectFile(bytes)?.contentType ?? 'image/png' }
 }
 
 /** Each material's base colour and embedded base-colour texture. */
@@ -278,17 +340,386 @@ export function collectMaterials(glb: ParsedGlb): MaterialInfo[] {
   return (glb.json.materials ?? []).map((material, index) => {
     const [r, g, b, a] = material.pbrMetallicRoughness?.baseColorFactor ?? [1, 1, 1, 1]
     const info: MaterialInfo = { index, name: material.name ?? `material${index}`, color: [r ?? 1, g ?? 1, b ?? 1, a ?? 1] }
-    const textureIndex = material.pbrMetallicRoughness?.baseColorTexture?.index
-    const image = textureIndex !== undefined ? glb.json.images?.[glb.json.textures?.[textureIndex]?.source ?? -1] : undefined
-    if (image?.bufferView !== undefined) {
-      const view = glb.json.bufferViews![image.bufferView]!
-      const mimeType = image.mimeType ?? 'image/png'
+    const imageIndex = textureSource(glb.json, material.pbrMetallicRoughness?.baseColorTexture?.index)
+    const image = imageIndex !== undefined ? imageBytes(glb, imageIndex) : undefined
+    if (image && imageIndex !== undefined) {
+      const size = detectFile(image.bytes.subarray(0, 256 * 1024))
       info.texture = {
-        bytes: glb.bin.slice(view.byteOffset ?? 0, (view.byteOffset ?? 0) + view.byteLength),
-        mimeType,
-        extension: mimeType === 'image/jpeg' ? 'jpg' : mimeType === 'image/webp' ? 'webp' : 'png',
+        bytes: image.bytes,
+        mimeType: image.mimeType,
+        extension: image.mimeType === 'image/jpeg' ? 'jpg' : image.mimeType === 'image/webp' ? 'webp' : image.mimeType === 'image/png' ? 'png' : (image.mimeType.split('/').pop() ?? 'bin'),
+        image: imageIndex,
+        ...(size?.width ? { width: size.width } : {}),
+        ...(size?.height ? { height: size.height } : {}),
       }
     }
     return info
   })
+}
+
+// ── Writing GLBs ───────────────────────────────────────────────────────────
+
+/** A GLB from its JSON and binary chunk (each padded to 4 bytes, as the format requires). */
+export function writeGlb(json: unknown, bin: Uint8Array): Uint8Array {
+  const text = new TextEncoder().encode(JSON.stringify(json))
+  const jsonLength = Math.ceil(text.length / 4) * 4
+  const binLength = Math.ceil(bin.length / 4) * 4
+  const total = 12 + 8 + jsonLength + (bin.length ? 8 + binLength : 0)
+  const out = new Uint8Array(total)
+  const view = new DataView(out.buffer)
+  view.setUint32(0, 0x46546c67, true)
+  view.setUint32(4, 2, true)
+  view.setUint32(8, total, true)
+  view.setUint32(12, jsonLength, true)
+  view.setUint32(16, 0x4e4f534a, true)
+  out.fill(0x20, 20, 20 + jsonLength)
+  out.set(text, 20)
+  if (bin.length) {
+    const at = 20 + jsonLength
+    view.setUint32(at, binLength, true)
+    view.setUint32(at + 4, 0x004e4942, true)
+    out.set(bin, at + 8)
+  }
+  return out
+}
+
+// ── PNG ────────────────────────────────────────────────────────────────────
+
+/** Pixels, 8 bits per channel, RGBA, row by row from the top. */
+export interface RasterImage {
+  width: number
+  height: number
+  data: Uint8Array
+}
+
+async function zlibStream(data: Uint8Array, stream: CompressionStream | DecompressionStream): Promise<Uint8Array> {
+  const piped = new Blob([data as BlobPart]).stream().pipeThrough(stream)
+  return new Uint8Array(await new Response(piped).arrayBuffer())
+}
+
+function pictureError(message: string): ZettaError {
+  return new ZettaError({ code: 'UNSUPPORTED_FILE_TYPE', message })
+}
+
+/** Decodes a PNG (any colour type and bit depth, not interlaced) into RGBA. */
+export async function decodePng(bytes: Uint8Array): Promise<RasterImage> {
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+  if (!signature.every((value, i) => bytes[i] === value)) throw pictureError('Not a PNG picture.')
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  let width = 0
+  let height = 0
+  let depth = 0
+  let type = 0
+  let interlace = 0
+  let palette: Uint8Array | undefined
+  let transparency: Uint8Array | undefined
+  const idat: Uint8Array[] = []
+  for (let offset = 8; offset + 8 <= bytes.length; ) {
+    const length = view.getUint32(offset)
+    const name = String.fromCharCode(...bytes.subarray(offset + 4, offset + 8))
+    const body = bytes.subarray(offset + 8, offset + 8 + length)
+    if (name === 'IHDR') {
+      width = view.getUint32(offset + 8)
+      height = view.getUint32(offset + 12)
+      depth = bytes[offset + 16] ?? 0
+      type = bytes[offset + 17] ?? 0
+      interlace = bytes[offset + 20] ?? 0
+    } else if (name === 'PLTE') palette = body
+    else if (name === 'tRNS') transparency = body
+    else if (name === 'IDAT') idat.push(body)
+    else if (name === 'IEND') break
+    offset += 12 + length
+  }
+  const channels = ({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 } as Record<number, number>)[type]
+  if (!width || !height || !channels || ![1, 2, 4, 8, 16].includes(depth)) throw pictureError('That PNG could not be read.')
+  if (interlace) throw pictureError('Interlaced PNGs are not supported here; save the picture without interlacing.')
+  const joined = new Uint8Array(idat.reduce((sum, part) => sum + part.length, 0))
+  idat.reduce((at, part) => (joined.set(part, at), at + part.length), 0)
+  const raw = await zlibStream(joined, new DecompressionStream('deflate'))
+  const bitsPerPixel = channels * depth
+  const bpp = Math.max(1, bitsPerPixel >> 3)
+  const stride = Math.ceil((width * bitsPerPixel) / 8)
+  if (raw.length < (stride + 1) * height) throw pictureError('That PNG is cut short.')
+  const pixels = new Uint8Array(stride * height)
+  let previous = new Uint8Array(stride)
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)]
+    const line = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1))
+    const out = pixels.subarray(y * stride, (y + 1) * stride)
+    for (let i = 0; i < stride; i++) {
+      const a = i >= bpp ? out[i - bpp]! : 0
+      const b = previous[i]!
+      const c = i >= bpp ? previous[i - bpp]! : 0
+      let x = line[i]!
+      if (filter === 1) x += a
+      else if (filter === 2) x += b
+      else if (filter === 3) x += (a + b) >> 1
+      else if (filter === 4) {
+        const p = a + b - c
+        const pa = Math.abs(p - a)
+        const pb = Math.abs(p - b)
+        const pc = Math.abs(p - c)
+        x += pa <= pb && pa <= pc ? a : pb <= pc ? b : c
+      } else if (filter !== 0) throw pictureError('That PNG could not be read.')
+      out[i] = x & 0xff
+    }
+    previous = out
+  }
+  const sample = (row: Uint8Array, index: number): number => {
+    if (depth === 8) return row[index]!
+    if (depth === 16) return row[index * 2]!
+    const bit = index * depth
+    return ((row[bit >> 3]! >> (8 - depth - (bit & 7))) & ((1 << depth) - 1)) * (type === 3 ? 1 : 255 / ((1 << depth) - 1))
+  }
+  const data = new Uint8Array(width * height * 4)
+  for (let y = 0; y < height; y++) {
+    const row = pixels.subarray(y * stride, (y + 1) * stride)
+    for (let x = 0; x < width; x++) {
+      const o = (y * width + x) * 4
+      const s = x * channels
+      if (type === 3) {
+        const index = sample(row, x)
+        data[o] = palette?.[index * 3] ?? 0
+        data[o + 1] = palette?.[index * 3 + 1] ?? 0
+        data[o + 2] = palette?.[index * 3 + 2] ?? 0
+        data[o + 3] = transparency?.[index] ?? 255
+      } else if (type === 0 || type === 4) {
+        const grey = sample(row, s)
+        data[o] = data[o + 1] = data[o + 2] = grey
+        data[o + 3] = type === 4 ? sample(row, s + 1) : 255
+      } else {
+        data[o] = sample(row, s)
+        data[o + 1] = sample(row, s + 1)
+        data[o + 2] = sample(row, s + 2)
+        data[o + 3] = type === 6 ? sample(row, s + 3) : 255
+      }
+    }
+  }
+  return { width, height, data }
+}
+
+/** Encodes RGBA pixels as a PNG; `alpha: false` drops the alpha channel (RGB). */
+export async function encodePng(image: RasterImage, options: { alpha?: boolean } = {}): Promise<Uint8Array> {
+  const channels = options.alpha === false ? 3 : 4
+  const { width, height, data } = image
+  const stride = width * channels
+  const raw = new Uint8Array((stride + 1) * height)
+  for (let y = 0; y < height; y++) {
+    const at = y * (stride + 1)
+    raw[at] = 1 // "Sub": each byte minus the one to its left, which keeps flat maps small.
+    for (let x = 0; x < width; x++) {
+      for (let c = 0; c < channels; c++) {
+        const value = data[(y * width + x) * 4 + c]!
+        const left = x > 0 ? data[(y * width + x - 1) * 4 + c]! : 0
+        raw[at + 1 + x * channels + c] = (value - left) & 0xff
+      }
+    }
+  }
+  const idat = await zlibStream(raw, new CompressionStream('deflate'))
+  const header = new Uint8Array(13)
+  const headerView = new DataView(header.buffer)
+  headerView.setUint32(0, width)
+  headerView.setUint32(4, height)
+  header.set([8, channels === 4 ? 6 : 2, 0, 0, 0], 8)
+  const chunk = (name: string, body: Uint8Array) => {
+    const out = new Uint8Array(12 + body.length)
+    const view = new DataView(out.buffer)
+    view.setUint32(0, body.length)
+    out.set(new TextEncoder().encode(name), 4)
+    out.set(body, 8)
+    view.setUint32(8 + body.length, crc32(out.subarray(4, 8 + body.length)))
+    return out
+  }
+  const parts = [new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', header), chunk('IDAT', idat), chunk('IEND', new Uint8Array(0))]
+  const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0))
+  parts.reduce((at, part) => (out.set(part, at), at + part.length), 0)
+  return out
+}
+
+/** Resizes RGBA pixels: an area average when shrinking, bilinear when growing. */
+export function resizeImage(image: RasterImage, width: number, height: number): RasterImage {
+  if (image.width === width && image.height === height) return image
+  const { data: src, width: sw, height: sh } = image
+  const out = new Uint8Array(width * height * 4)
+  const sx = sw / width
+  const sy = sh / height
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const o = (y * width + x) * 4
+      if (sx >= 1 && sy >= 1) {
+        const x0 = Math.floor(x * sx)
+        const x1 = Math.max(x0 + 1, Math.min(sw, Math.floor((x + 1) * sx)))
+        const y0 = Math.floor(y * sy)
+        const y1 = Math.max(y0 + 1, Math.min(sh, Math.floor((y + 1) * sy)))
+        const sums = [0, 0, 0, 0]
+        for (let yy = y0; yy < y1; yy++) for (let xx = x0; xx < x1; xx++) for (let c = 0; c < 4; c++) sums[c]! += src[(yy * sw + xx) * 4 + c]!
+        const count = (x1 - x0) * (y1 - y0)
+        for (let c = 0; c < 4; c++) out[o + c] = Math.round(sums[c]! / count)
+      } else {
+        const fx = Math.min(sw - 1, Math.max(0, (x + 0.5) * sx - 0.5))
+        const fy = Math.min(sh - 1, Math.max(0, (y + 0.5) * sy - 0.5))
+        const x0 = Math.floor(fx)
+        const y0 = Math.floor(fy)
+        const x1 = Math.min(sw - 1, x0 + 1)
+        const y1 = Math.min(sh - 1, y0 + 1)
+        const tx = fx - x0
+        const ty = fy - y0
+        for (let c = 0; c < 4; c++) {
+          const top = src[(y0 * sw + x0) * 4 + c]! * (1 - tx) + src[(y0 * sw + x1) * 4 + c]! * tx
+          const bottom = src[(y1 * sw + x0) * 4 + c]! * (1 - tx) + src[(y1 * sw + x1) * 4 + c]! * tx
+          out[o + c] = Math.round(top * (1 - ty) + bottom * ty)
+        }
+      }
+    }
+  }
+  return { width, height, data: out }
+}
+
+// ── Texture maps ───────────────────────────────────────────────────────────
+
+/** One generated map to put on one material. */
+export interface TextureMapEdit {
+  /** Index into the GLB's materials. */
+  material: number
+  map: TextureMapKind
+  /** The map picture (PNG or JPEG; roughness and metalness must be PNG, since they are packed). */
+  image: { bytes: Uint8Array; mimeType: string }
+}
+
+export interface AppliedTextureMaps {
+  glb: Uint8Array
+  /** What was adjusted besides the maps themselves, for people to read. */
+  notes: string[]
+}
+
+/**
+ * Puts generated PBR maps on a GLB's materials, as the Studio's inspector does before Save.
+ *
+ * Normal, emissive and ambient occlusion each get their own texture. Roughness and metalness share
+ * glTF's one metal/rough texture (green = roughness, blue = metalness), so they are packed into a
+ * new PNG, keeping the other channel from the existing texture when only one is new (that texture
+ * must then be a PNG). A slot that had a texture keeps its UV set and transform; an empty one takes
+ * the base colour's, since the map was drawn from it. The images are embedded; nothing else in the
+ * file changes, apart from a zero emissive, metallic or roughness factor (which would hide its new
+ * map) becoming 1.
+ */
+export async function applyTextureMaps(data: Uint8Array, edits: readonly TextureMapEdit[]): Promise<AppliedTextureMaps> {
+  const glb = parseGlb(data, { geometry: false })
+  const json = structuredClone(glb.json)
+  if (json.buffers?.[0]?.uri !== undefined) throw new ZettaError({ code: 'UNSUPPORTED_FILE_TYPE', message: 'This GLB keeps its data in an external file; maps cannot be embedded.' })
+  const notes: string[] = []
+  const pieces: Uint8Array[] = [glb.bin]
+  let length = glb.bin.length
+  const images = new Map<Uint8Array, number>()
+
+  const appendImage = (bytes: Uint8Array, mimeType: string): number => {
+    const known = images.get(bytes)
+    if (known !== undefined) return known
+    if (mimeType !== 'image/png' && mimeType !== 'image/jpeg') {
+      throw new ZettaError({ code: 'UNSUPPORTED_FILE_TYPE', message: `A ${mimeType} map cannot be embedded in a GLB; use PNG or JPEG.` })
+    }
+    const padding = (4 - (length % 4)) % 4
+    if (padding) pieces.push(new Uint8Array(padding))
+    length += padding
+    json.bufferViews = json.bufferViews ?? []
+    json.bufferViews.push({ buffer: 0, byteOffset: length, byteLength: bytes.length })
+    pieces.push(bytes)
+    length += bytes.length
+    json.images = json.images ?? []
+    json.images.push({ bufferView: json.bufferViews.length - 1, mimeType })
+    images.set(bytes, json.images.length - 1)
+    return json.images.length - 1
+  }
+  const newTexture = (image: number, like: TextureInfo | undefined): number => {
+    const sampler = like ? json.textures?.[like.index]?.sampler : undefined
+    json.textures = json.textures ?? []
+    json.textures.push({ source: image, ...(sampler !== undefined ? { sampler } : {}) })
+    return json.textures.length - 1
+  }
+  /** The slot's own placement when it had a texture, else the base colour's. */
+  const placed = (existing: TextureInfo | undefined, base: TextureInfo | undefined, index: number): TextureInfo => {
+    const like = existing ?? base
+    return {
+      ...existing,
+      index,
+      ...(like?.texCoord !== undefined ? { texCoord: like.texCoord } : {}),
+      ...(like?.extensions ? { extensions: like.extensions } : {}),
+    }
+  }
+
+  const byMaterial = new Map<number, Map<TextureMapKind, TextureMapEdit['image']>>()
+  for (const edit of edits) {
+    if (!json.materials?.[edit.material]) throw new ZettaError({ code: 'INVALID_INPUT', message: `The model has no material ${edit.material}.` })
+    const maps = byMaterial.get(edit.material) ?? new Map()
+    maps.set(edit.map, edit.image)
+    byMaterial.set(edit.material, maps)
+  }
+
+  for (const [index, maps] of byMaterial) {
+    const material = json.materials![index]!
+    const label = material.name ?? `material${index}`
+    const base = material.pbrMetallicRoughness?.baseColorTexture
+    const like = (existing: TextureInfo | undefined) => existing ?? base
+    const normal = maps.get('normal')
+    if (normal) material.normalTexture = placed(material.normalTexture, base, newTexture(appendImage(normal.bytes, normal.mimeType), like(material.normalTexture)))
+    const ao = maps.get('ao')
+    if (ao) material.occlusionTexture = placed(material.occlusionTexture, base, newTexture(appendImage(ao.bytes, ao.mimeType), like(material.occlusionTexture)))
+    const emissive = maps.get('emissive')
+    if (emissive) {
+      material.emissiveTexture = placed(material.emissiveTexture, base, newTexture(appendImage(emissive.bytes, emissive.mimeType), like(material.emissiveTexture)))
+      if (!material.emissiveFactor || material.emissiveFactor.every((value) => value === 0)) {
+        material.emissiveFactor = [1, 1, 1]
+        notes.push(`${label}: emissive colour set to white, so the emissive map shows.`)
+      }
+    }
+    const roughness = maps.get('roughness')
+    const metalness = maps.get('metalness')
+    if (roughness || metalness) {
+      const pbr = (material.pbrMetallicRoughness = material.pbrMetallicRoughness ?? {})
+      const existing = pbr.metallicRoughnessTexture
+      const decode = async (image: { bytes: Uint8Array; mimeType: string }, what: string) => {
+        if (image.mimeType !== 'image/png' && detectFile(image.bytes)?.contentType !== 'image/png') {
+          throw new ZettaError({
+            code: 'UNSUPPORTED_FILE_TYPE',
+            message: `${what} is ${image.mimeType.replace('image/', '').toUpperCase()}, and roughness and metalness can only be packed from PNGs here. Generate both maps together (--map roughness --map metalness), or apply them in the Studio.`,
+          })
+        }
+        return decodePng(image.bytes)
+      }
+      let old: RasterImage | undefined
+      if (existing && !(roughness && metalness)) {
+        const source = textureSource(json, existing.index)
+        const stored = source !== undefined ? imageBytes(glb, source) : undefined
+        if (stored) old = await decode(stored, `${label}'s current metal/rough texture`)
+      }
+      const rough = roughness ? await decode(roughness, 'The roughness map') : undefined
+      const metal = metalness ? await decode(metalness, 'The metalness map') : undefined
+      const width = Math.max(old?.width ?? 0, rough?.width ?? 0, metal?.width ?? 0)
+      const height = Math.max(old?.height ?? 0, rough?.height ?? 0, metal?.height ?? 0)
+      const [o, r, m] = [old, rough, metal].map((img) => (img ? resizeImage(img, width, height).data : undefined))
+      const out = new Uint8Array(width * height * 4)
+      for (let i = 0; i < out.length; i += 4) {
+        out[i] = o ? o[i]! : 0
+        out[i + 1] = r ? r[i + 1]! : o ? o[i + 1]! : 255
+        out[i + 2] = m ? m[i + 2]! : o ? o[i + 2]! : 255
+        out[i + 3] = 255
+      }
+      const png = await encodePng({ width, height, data: out }, { alpha: false })
+      pbr.metallicRoughnessTexture = placed(existing, base, newTexture(appendImage(png, 'image/png'), like(existing)))
+      if (metalness && pbr.metallicFactor === 0) {
+        pbr.metallicFactor = 1
+        notes.push(`${label}: metallic factor set to 1, so the metalness map shows.`)
+      }
+      if (roughness && pbr.roughnessFactor === 0) {
+        pbr.roughnessFactor = 1
+        notes.push(`${label}: roughness factor set to 1, so the roughness map shows.`)
+      }
+    }
+  }
+
+  const bin = new Uint8Array(length)
+  pieces.reduce((at, piece) => (bin.set(piece, at), at + piece.length), 0)
+  json.buffers = json.buffers?.length ? json.buffers : [{ byteLength: 0 }]
+  json.buffers[0]!.byteLength = length
+  return { glb: writeGlb(json, bin), notes }
 }

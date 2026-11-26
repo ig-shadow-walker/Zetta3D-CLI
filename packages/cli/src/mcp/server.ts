@@ -2,9 +2,10 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { Context, type GlobalOptions } from '../core/context'
-import { inputJsonSchema, type AnyCommand } from '../core/define'
+import { inputJsonSchema, toolName, type AnyCommand } from '../core/define'
 import { toErrorEnvelope } from '../core/output'
 import { parseInput } from '../core/program'
+import { knownUpdate, refreshUpdateCheck } from '../update-notice'
 import { VERSION } from '../version'
 
 export interface McpOptions {
@@ -25,9 +26,7 @@ export const MCP_INSTRUCTIONS = `Zetta 3D tools: generate 3D models from text or
 - Errors are JSON with a code, a message and a hint naming the next step.`
 
 /** Tool name for a command: path joined with underscores (`asset list` → `asset_list`). */
-export function toolName(command: AnyCommand): string {
-  return command.path.join('_').replace(/-/g, '_')
-}
+export { toolName }
 
 export function mcpTools(commands: AnyCommand[], readOnly = false): AnyCommand[] {
   return commands.filter((c) => c.mcp !== false && c.kind !== 'local' && (!readOnly || c.kind === 'read'))
@@ -59,7 +58,14 @@ export async function runMcpServer(options: McpOptions): Promise<void> {
   // stdout belongs to the protocol; anything a command prints goes to stderr.
   const streams = { stdout: process.stderr, stderr: process.stderr }
 
-  const server = new Server({ name: 'zetta3d', version: VERSION, title: 'Zetta 3D' }, { capabilities: { tools: {} }, instructions: MCP_INSTRUCTIONS })
+  // A newer zetta the last check found goes into the instructions, so the agent can tell the user.
+  // The check itself runs in the background, for the next session.
+  const update = knownUpdate(options.env ?? process.env)
+  void refreshUpdateCheck(options.env ?? process.env)
+  const instructions = update
+    ? `${MCP_INSTRUCTIONS}\n- zetta ${update.latest} is available (this server runs ${update.current}). Tell the user once; they update with: ${update.upgradeWith}`
+    : MCP_INSTRUCTIONS
+  const server = new Server({ name: 'zetta3d', version: VERSION, title: 'Zetta 3D' }, { capabilities: { tools: {} }, instructions })
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: tools.map(toolDefinition) }))
 

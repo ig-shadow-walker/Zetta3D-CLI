@@ -2,8 +2,8 @@
  * Agent evals: give an AI agent plain requests and check that it finishes them with `zetta` alone.
  *
  *   bun run evals --list                          # show the tasks
- *   ZETTA_TOKEN=… bun run evals                   # free tasks, with Claude Code as the agent
- *   ZETTA_TOKEN=… bun run evals --paid            # also tasks that spend credits (each capped)
+ *   ZETTA_API_KEY=… bun run evals                   # free tasks, with Claude Code as the agent
+ *   ZETTA_API_KEY=… bun run evals --paid            # also tasks that spend credits (each capped)
  *   bun run evals --only credits,price-only --no-skill --report evals-report.json
  *
  * The agent runs in a fresh folder per task, with the Zetta skill installed there (unless
@@ -95,7 +95,7 @@ interface Outcome {
 }
 
 if (zetta('auth status', tmpdir()).json?.signedIn !== true) {
-  console.error('Not signed in. Set ZETTA_TOKEN (or run `zetta auth login`) first.')
+  console.error('Not signed in. Set ZETTA_API_KEY (or run `zetta auth login`) first.')
   process.exit(2)
 }
 

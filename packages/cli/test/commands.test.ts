@@ -6,7 +6,7 @@ import { fakeFetch } from './fake-fetch'
 import { tokenFor, zetta } from './harness'
 
 const API = 'https://api.zetta3d.ai/api'
-const env = { ZETTA_TOKEN: tokenFor() }
+const env = { ZETTA_TEST_SIGN_IN: tokenFor() }
 
 describe('config', () => {
   it('sets, reads and validates settings; profiles switch the API', async () => {
@@ -28,7 +28,7 @@ describe('config', () => {
       [`POST ${API}/3d/quote`, { json: { credits: 40, lines: [] } }],
       [`POST ${API}/3d/generations`, { json: { generation: { id: 1, status: 'queued', result: null, tags: [], availability: 'private', createdAt: 'x', updatedAt: 'x' }, quote: { credits: 40, lines: [] }, charged: true } }],
     ])
-    const ok = await zetta(['generate', '-p', 'a mug'], { fetch, env, configDir: dir })
+    const ok = await zetta(['generate', '--image', 'https://files.example/mug.png'], { fetch, env, configDir: dir })
     expect(ok.code).toBe(0)
   })
 })

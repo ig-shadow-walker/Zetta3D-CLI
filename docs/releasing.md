@@ -44,101 +44,88 @@ How builds work:
 - **Version:** `--version 1.2.3` stamps another version in; the default comes from `packages/cli/package.json`. Check a binary with `release/<platform>/zetta --version`.
 - **Download-host files:** the build also writes `dist/v<version>/` (the binaries under their full names, `.gz` copies, `SHA256SUMS`) and `dist/latest.json`. That is the layout the installers and `zetta upgrade` download from, and what you upload when you publish.
 
-## Publishing to the storage bucket
-
-`--upload` publishes the builds to the Zetta storage bucket (DigitalOcean Spaces) under `zcli/`, which `https://downloads.zetta3d.ai/zcli` serves:
+## How users get zetta
 
 ```
-zcli/macosx/zetta-darwin-arm64        zcli/macosx/zetta-darwin-x64          the newest build, one folder per OS,
-zcli/windows/zetta-windows-x64.exe                                          each with a .sha256 beside it
-zcli/linux/zetta-linux-x64            zcli/linux/zetta-linux-arm64
-zcli/linux/zetta-linux-x64-musl       zcli/linux/zetta-linux-arm64-musl
-zcli/v<version>/…                     every binary, its .gz copy and SHA256SUMS
+curl -fsSL https://zetta3d.ai/install.sh | sh        # macOS, Linux
+irm https://zetta3d.ai/install.ps1 | iex             # Windows
+```
+
+How that one line works:
+1. **The website:** zetta3d.ai answers `/install.sh` and `/install.ps1` with a redirect to the installers in your bucket.
+2. **The installer:** picks the build for that computer, checks it and installs it. It installs the agent skill, then starts the browser sign-in, so the CLI is connected to the user's account straight away.
+3. **Updates:** from then on, `zetta` checks the bucket for new versions and offers `zetta upgrade`.
+
+Releases live in one folder of the Zetta storage bucket (DigitalOcean Spaces), by default `zcli/`:
+
+```
+zcli/latest.json                      which version installs and upgrades get (upload this last)
+zcli/v<version>/…                     every build, its .gz copy and SHA256SUMS
 zcli/install.sh  zcli/install.ps1     the installers
-zcli/latest.json                      what the installers and `zetta upgrade` install
+zcli/macosx/  zcli/windows/  zcli/linux/   the newest build per OS, for direct download links (optional)
 ```
-
-```bash
-bun run build --release --upload           # the normal release: upload only after every check passed
-bun run build all --upload                 # every platform, without the release checks
-bun run build windows --upload             # one platform: updates zcli/windows/ only
-bun run build --collect --upload           # upload what's in dist/ again (after signing, or a failed upload)
-```
-
-What gets uploaded:
-- **Public files:** every file is public, because the one-line installers and `zetta upgrade` download them without keys. Each upload replaces what was there.
-- **Upload order:** the version folder goes first, then the per-OS copies, then the installers, and `latest.json` last. Installs never see a `latest.json` pointing at files that aren't there yet.
-- **Partial builds:** when not every platform is built (`bun run build windows --upload`), only that OS folder is updated. The installers and `latest.json` keep the release they had, so Mac and Linux installs never break.
-- **Prereleases** (`0.3.0-beta.1`): only `zcli/v<version>/` is uploaded. Install one with `ZETTA_VERSION=0.3.0-beta.1`.
-
-The bucket and its keys come from the environment, under the names the backend uses. Set them in your shell, or in a file you `source` that is never committed. The values are never printed.
-
-| Variable | Example |
-|---|---|
-| `SPACES_KEY`, `SPACES_SECRET` | a Spaces access key; best a separate one limited to this bucket |
-| `SPACES_BUCKET` | the bucket's name |
-| `SPACES_ENDPOINT` | `https://sfo3.digitaloceanspaces.com` (with or without the bucket in front) |
-| `SPACES_REGION` | optional; default `us-east-1`, which Spaces accepts |
-| `SPACES_CDN_ENDPOINT` | optional; the links printed after uploading use it |
-
-If any are unset, the command stops before building and names the missing ones.
 
 ## One-time setup (owner)
 
-This makes `curl -fsSL https://zetta3d.ai/install.sh | sh` (and `irm https://zetta3d.ai/install.ps1 | iex` on Windows) install the right build on any machine. Here is how a request travels:
-
-```
-zetta3d.ai/install.sh  ──302──▶  downloads.zetta3d.ai/zcli/install.sh  ──▶  the bucket's CDN: zcli/install.sh
-   (the website)                    (a Cloudflare redirect)                   (uploaded by --upload)
-```
-
-1. **Bucket CDN:** in DigitalOcean, open the bucket (Spaces Object Storage → the bucket → Settings) and enable its CDN. Note the CDN endpoint, `https://<bucket>.<region>.cdn.digitaloceanspaces.com`.
-2. **`downloads.zetta3d.ai`:** in Cloudflare (the `zetta3d.ai` zone), point it at the bucket's CDN. Either:
-   - **Option A, simplest (no certificate):** add a proxied DNS record for `downloads` (for example `AAAA` `100::`). Then add a redirect rule: when the hostname is `downloads.zetta3d.ai`, do a dynamic `302` redirect to `concat("https://<bucket>.<region>.cdn.digitaloceanspaces.com", http.request.uri.path)`, preserving the query string. The installers and `zetta upgrade` all follow redirects.
-   - **Option B:** add `downloads.zetta3d.ai` as the CDN's custom subdomain in DigitalOcean (this needs a certificate for it), then a DNS-only `CNAME` `downloads` → `<bucket>.<region>.cdn.digitaloceanspaces.com` in Cloudflare.
-3. **The website:** `server.mjs` in `Zetta3D-Frontend` redirects `/install.sh` and `/install.ps1` to `https://downloads.zetta3d.ai/zcli/…` (`CLI_DOWNLOAD_BASE` overrides that). Deploy it, and make sure no Cloudflare rule answers those two paths first.
-4. **Release machine:** set the `SPACES_*` settings above, plus the vendor word list in your shell profile:
+1. **Your download address:** the bucket's address plus the folder. Find it in DigitalOcean: the bucket → Settings → Origin endpoint, or CDN endpoint if the CDN is on. It looks like `https://<bucket>.<region>.digitaloceanspaces.com/zcli`. Put it, and the vendor-name list, in your shell profile:
 
    ```bash
-   export ZETTA_VENDOR_WORDS_FILE=/path/to/vendor-words.ts
+   export ZETTA_PUBLIC_BASE=https://<bucket>.<region>.digitaloceanspaces.com/zcli
+   export ZETTA_VENDOR_WORDS_FILE=/path/to/vendor-words.ts   # never commit it
    ```
 
-   The release build checks that no model vendor's name is in the code or the binaries. `ZETTA_VENDOR_WORDS` (comma-separated) works too. Never commit the list.
-5. **First release:** run `bun run build --release --upload`.
-6. **Check it:**
+   `bun run release --base <address>` works too. No access keys are needed: you upload the files yourself.
+2. **The website:** set `CLI_DOWNLOAD_BASE` on the website's web service to the same address. Then `https://zetta3d.ai/install.sh` and `/install.ps1` redirect there, and the one-line install works.
+3. **Optional: the bucket's CDN.** Turn it on in the bucket's settings, with a short cache time (for example 5 minutes), and use the CDN endpoint as the address.
 
-   ```bash
-   curl -fsSL https://zetta3d.ai/install.sh | sh
-   zetta --version
-   ```
-
-Optional extras:
-- **npm:** create the `@zetta3d` organisation and run `npm login`.
-- **Homebrew:** create the tap repository, e.g. `zetta3d/homebrew-tap`.
-- **Signing:** a Developer ID Application certificate in your login keychain for macOS, and a code-signing certificate for Windows (`brew install jsign`). Unsigned builds are fine for `curl` and `irm` installs; browser downloads would hit Gatekeeper and SmartScreen.
+Each build records the download address, and checks it for new versions. If you ever move the releases (say, to `https://downloads.zetta3d.ai/zcli`), keep the old address serving the same files: copies installed before the move keep checking there.
 
 ## Cutting a release
 
-**1. Build and check.**
-
 ```bash
-# bump packages/cli/package.json → "version": "0.2.0"
-bun run docs:commands          # keep docs/COMMANDS.md and skill/SKILL.md in step
-bun run build --release
+bun run release patch          # 0.1.0 → 0.1.1; or minor, major, or an exact version like 0.2.0
+bun run release minor --dry-run   # show the plan; change nothing
 ```
 
-`--release` does what the release pipeline used to do, stopping at the first failure:
-- runs `bun run check` (typecheck, tests, lint);
-- builds every target plus the baseline builds;
-- runs the vendor-name scan over the sources, the bundled JavaScript and every binary;
-- runs the real installer end to end against the files it just built.
+`bun run release` builds and checks everything, then gets the files ready for you to upload. It stops at the first failure:
 
-Optionally, test against the real API: `ZETTA_TOKEN=… bun run smoke:live --bin dist/v0.2.0/zetta-darwin-arm64`.
+1. **Checks the address:** works out the download address. Then it checks the new version is newer than the one online; otherwise installed copies would never be offered it.
+2. **Asks first:** shows the version and the address. `--yes` skips the question.
+3. **Version:** sets `packages/cli/package.json`, and regenerates the docs and the agent skill.
+4. **Builds and checks:** the tests, typecheck and lint, every platform plus the baseline builds, the vendor-name scan, and the real installer end to end. Each binary records the download address.
+5. **Stages the files:** puts every file to upload in `release/upload/`, in the bucket's layout, with the installers pointing at the address. It prints the steps, and writes them to `release/upload/README.md`.
 
-**2. Sign (optional).** Signing changes the bytes, so recompute the checksums afterwards.
+Then upload by hand, in the DigitalOcean console (the bucket → Upload). Make every file **Public**:
+1. **First:** the folder `release/upload/1-upload-first/zcli`. Drag it onto the bucket's top level; it merges with what is there. It holds the version folder, the installers and the per-OS copies. Then set `zcli/install.ps1`'s Content-Type to `text/plain` (the file's … menu), because Windows' `irm … | iex` needs text.
+2. **Last:** `release/upload/2-upload-last/zcli/latest.json`, into `zcli/`. This is the switch: once it's there, installs get the new version and installed copies are told about it.
+3. **Check it:** if the bucket has a CDN, purge `zcli/latest.json`, `zcli/install.sh` and `zcli/install.ps1`. Then run:
+
+   ```bash
+   bun run release --verify
+   ```
+
+   It reads the release back the way installs will see it. It checks that `latest.json` names the new version, that both installers point at the address, that `install.ps1` is served as text, and that every file of the version is there. Fix any ✗ line and run it again.
+
+**Who hears about it:**
+- **People at a terminal:** installed copies check for a new release at most once an hour, and say "zetta 0.2.0 is out (you have 0.1.0). Update with: zetta upgrade".
+- **Agents:**
+  - the skill tells them to run `zetta upgrade --check` at the start of a session and tell the user;
+  - the MCP server mentions a newer version in its instructions;
+  - `zetta doctor` reports it.
+
+**Prereleases** (`bun run release 0.3.0-beta.1`): only the version folder is staged. `latest.json` doesn't move, so nobody is offered it; install one with `ZETTA_VERSION=0.3.0-beta.1`.
+
+**Before a big release,** try the new version against the real API with a paid account: `ZETTA_API_KEY=… bun run smoke:live`.
+
+**Uploading from the command line instead** (optional): `bun run build --release --upload` uploads everything itself through the Spaces S3 API. It needs a Spaces access key in `SPACES_KEY`, `SPACES_SECRET`, `SPACES_BUCKET` and `SPACES_ENDPOINT` (and optionally `SPACES_FOLDER` and `SPACES_CDN_ENDPOINT`).
+
+### Signing (optional)
+
+Signing changes the bytes, so sign between building and uploading. Build with the download address, so the builds still record it:
 
 ```bash
 V=0.2.0
+bun run build --release --version $V --download-base <download address>
 # macOS: sign with the hardened runtime, then notarise
 for f in dist/v$V/zetta-darwin-*; do
   case "$f" in *.gz) continue ;; esac
@@ -153,29 +140,22 @@ for f in dist/v$V/zetta-windows-*.exe; do
     --tsaurl http://timestamp.digicert.com --name "Zetta 3D CLI" --url https://zetta3d.ai "$f"
 done
 bun run scripts/build-binaries.ts --version $V --rehash    # new SHA256SUMS, .gz copies and latest.json
-bun run build --collect --version $V                       # copy the signed binaries into release/ again
+bun run release $V --no-build                               # stage the signed builds, then upload as above
 ```
 
 Some notes on signing:
 - **Notarisation profile:** create `zetta-notary` once with `xcrun notarytool store-credentials`.
 - **Stapling:** a bare executable can't be stapled. Gatekeeper checks the notarisation online.
-- **Hardware or cloud certificates:** for example Azure Trusted Signing. These need other `jsign` `--storetype` options.
 
-**3. Publish.**
+### npm and Homebrew (optional)
 
 ```bash
-bun run build --collect --upload --version 0.2.0   # if you didn't pass --upload in step 1, or you signed
-git tag v0.2.0 && git push origin v0.2.0           # optional: mark the released commit
-
-# npm and Homebrew (optional)
 bun run package:channels                           # dist/npm/ and dist/homebrew/zetta.rb
 for d in dist/npm/cli-*/ dist/npm/cli/; do (cd "$d" && npm publish --access public); done
 cp dist/homebrew/zetta.rb ../homebrew-tap/Formula/zetta.rb    # then commit and push the tap
 ```
 
-**CDN cache:** `latest.json`, the installers and the `zcli/<os>/` files keep their names between releases. If installs still get the previous version, purge the bucket CDN's cache for `zcli/` (DigitalOcean: the bucket → Settings → CDN → Purge cache).
-
-**Prereleases** (`0.3.0-beta.1`): `--upload` uploads only `zcli/v<version>/`. Publish to npm with `--tag next`, and leave the Homebrew formula alone.
+Copies installed this way are upgraded with `brew upgrade zetta` or `npm install -g @zetta3d/cli@latest`. Their update notice says so, and `zetta upgrade` points there instead of replacing a file the package manager owns.
 
 ## The release files
 

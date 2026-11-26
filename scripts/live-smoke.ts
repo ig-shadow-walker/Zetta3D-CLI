@@ -2,8 +2,8 @@
  * Live smoke test against the real Zetta 3D API.
  *
  *   bun run smoke:live                         # free checks only (signed out: public routes only)
- *   ZETTA_TOKEN=… bun run smoke:live           # every free check, signed in
- *   ZETTA_TOKEN=… bun run smoke:live --paid --budget 200   # plus a few of the cheapest paid jobs
+ *   ZETTA_API_KEY=… bun run smoke:live           # every free check, signed in
+ *   ZETTA_API_KEY=… bun run smoke:live --paid --budget 200   # plus a few of the cheapest paid jobs
  *
  * Options: --bin <path> (test a built binary instead of the sources), --profile <name>, --keep
  * (keep the assets it creates), --report <file.json>.
@@ -148,7 +148,7 @@ step('featured assets (public)', () => `${expectOk(zetta(['asset', 'featured', '
 
 const status = zetta(['auth', 'status']).json
 const signedIn = Boolean(status?.signedIn)
-const needs = signedIn ? {} : { skip: 'not signed in (set ZETTA_TOKEN or run `zetta auth login`)' }
+const needs = signedIn ? {} : { skip: 'not signed in (set ZETTA_API_KEY or run `zetta auth login`)' }
 let creditsBefore = 0
 let entitlements: any
 
@@ -168,11 +168,11 @@ step('billing subscription', () => expectOk(zetta(['billing', 'subscription']), 
 step('asset list', () => `${expectOk(zetta(['asset', 'list', '--limit', '5']), 'asset list').total} assets`, needs)
 step('image list', () => `${expectOk(zetta(['image', 'list', '--limit', '5']), 'image list').total} pictures`, needs)
 step('pipeline list', () => `${expectOk(zetta(['pipeline', 'list']), 'pipeline list').items.length} pipelines`, needs)
-step('quote', () => `${expectOk(zetta(['quote', '--base', 'textured', '--engine', 'n1']), 'quote').credits} credits`, needs)
+step('quote', () => `${expectOk(zetta(['quote', '--base', 'textured', '--engine', 'n2.5']), 'quote').credits} credits`, needs)
 
-for (const engine of ['n1', 'n2.5', 'np1', 'np1.5']) {
+for (const engine of ['n2.5', 'np1', 'np1.5']) {
   const allowed =
-    engine === 'n1' || (engine === 'n2.5' ? entitlements?.threeD?.engines?.n25 : entitlements?.threeD?.engines?.np1)
+    engine === 'n2.5' ? entitlements?.threeD?.engines?.n25 : entitlements?.threeD?.engines?.np1
   step(`generate --dry-run (${engine})`, () => {
     const r = expectOk(zetta(['generate', '-p', 'a small ceramic mug', '--engine', engine, '--dry-run']), 'generate dry run')
     return `${r.credits} credits`
@@ -227,7 +227,7 @@ let generatedId: number | undefined
 step('paid: cheapest generation, waited and downloaded', () => {
   const out = join(work, 'out')
   const r = expectOk(
-    zetta(['generate', '-p', 'a simple ceramic coffee mug', '--engine', 'n1', '--no-texture', '--max-credits', String(budget - spentByPaidSteps), '--out', out, '--timeout', '15m'], 20 * 60_000),
+    zetta(['generate', '-p', 'a simple ceramic coffee mug', '--engine', 'n2.5', '--no-texture', '--max-credits', String(budget - spentByPaidSteps), '--out', out, '--timeout', '15m'], 20 * 60_000),
     'generate',
   )
   generatedId = r.id

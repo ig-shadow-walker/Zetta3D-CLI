@@ -1,6 +1,7 @@
 import type { AnyCommand } from '../core/define'
 import type { GroupInfo } from '../core/program'
 import { accountCommands, billingCommands } from './account'
+import { apikeyCommands } from './apikey'
 import { assetCommands } from './asset'
 import { authCommands } from './auth'
 import { catalogCommands } from './catalog'
@@ -18,8 +19,9 @@ import { metaCommands, registry } from './meta'
 
 export const GROUPS: GroupInfo[] = [
   { name: 'auth', summary: 'Sign in and out; see who you are signed in as.' },
-  { name: 'account', summary: 'Your account, credits, usage history and onboarding.' },
-  { name: 'billing', summary: 'Plans, subscription, checkout and billing portal links.' },
+  { name: 'account', summary: 'Your account, credits, usage history, trial codes and connected apps.' },
+  { name: 'apikey', summary: 'API keys for scripts, CI and servers: create, list, revoke; usage and request logs.' },
+  { name: 'billing', summary: 'Plans, Agent plans, subscription, checkout and billing portal links.' },
   { name: 'catalog', summary: 'Engines, prices and what your plan allows.' },
   { name: 'splat', summary: 'Gaussian-splat worlds from pictures or video (early access).' },
   { name: 'refine', summary: 'Finishing tools: retopology, segmentation, UVs, texturing, rigging, conversion.' },
@@ -37,6 +39,7 @@ export const COMMANDS: AnyCommand[] = [
   ...splatCommands,
   ...refineCommands,
   ...accountCommands,
+  ...apikeyCommands,
   ...billingCommands,
   ...catalogCommands,
   ...assetCommands,
@@ -53,7 +56,7 @@ export const COMMANDS: AnyCommand[] = [
 registry.commands = COMMANDS
 
 export const INTRO = `Get started:
-  zetta auth login                         sign in (or set ZETTA_TOKEN)
+  zetta auth login                         sign in (or set ZETTA_API_KEY)
   zetta generate --image chair.png --out . make a 3D model from a picture
   zetta asset list                         your library
   zetta guide                              how agents should use this CLI

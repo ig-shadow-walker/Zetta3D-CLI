@@ -12,6 +12,8 @@
 #   ZETTA_INSTALL_DIR=DIR    install into DIR instead of ~/.zetta/bin
 #   ZETTA_DOWNLOAD_BASE=URL  download host (default https://downloads.zetta3d.ai/zcli)
 #   ZETTA_NO_MODIFY_PATH=1   do not touch shell startup files
+#   ZETTA_NO_SKILL=1         do not install the skill for AI coding agents (Claude Code, Codex, Cursor)
+#   ZETTA_NO_LOGIN=1         do not start the browser sign-in after installing
 #
 # Everything runs inside main(), called on the last line, so a partly downloaded script does nothing.
 
@@ -396,8 +398,49 @@ $(head -n 5 "$z_work/version.txt")"
 		fi
 		out "  export PATH=\"$(rc_dir):\$PATH\""
 	fi
+	install_skill
+	if sign_in; then
+		out ""
+		out "You're all set. Try: ${z_bold}zetta generate -p \"a wooden chair\"${z_reset}  (or ${z_bold}zetta --help${z_reset})"
+	else
+		out ""
+		out "Next: ${z_bold}zetta auth login${z_reset} (signs you in with your browser; on a server or in CI, use an API key: ZETTA_API_KEY)"
+	fi
+}
+
+# Connects zetta to the user's Zetta 3D account with the browser sign-in, straight after installing,
+# when a person is at this terminal. Skipped in CI, without a terminal, when ZETTA_API_KEY is set (a
+# script's own identity), with ZETTA_NO_LOGIN=1, and when already signed in. Never fails the install.
+sign_in() {
+	if [ "${ZETTA_NO_LOGIN:-}" = 1 ] || [ -n "${CI:-}" ] || [ -n "${ZETTA_API_KEY:-}" ] || ! [ -t 1 ]; then return 1; fi
+	# `curl | sh` feeds this script on stdin, so the sign-in talks to the terminal itself.
+	(exec </dev/tty) 2>/dev/null || return 1
+	# `auth status` succeeds either way; what it says decides.
+	z_status=$("$z_bin" auth status --output json </dev/null 2>/dev/null) || z_status=""
+	case "$z_status" in
+	*'"signedIn": true'* | *'"signedIn":true'*)
+		out "Signed in already."
+		return 0
+		;;
+	esac
 	out ""
-	out "Next: ${z_bold}zetta auth login${z_reset}"
+	out "${z_bold}Sign in to your Zetta 3D account.${z_reset} Your browser opens; sign in there and click Connect (Ctrl-C to do it later)."
+	# Ctrl-C stops the sign-in, not this script: zetta is installed either way.
+	trap ':' INT
+	"$z_bin" auth login </dev/tty >/dev/tty 2>&1
+	z_login=$?
+	trap - INT
+	return "$z_login"
+}
+
+# Teaches the AI coding agents found here (Claude Code, Codex, Cursor) to use zetta: a skill folder
+# in each agent's skills directory. Never fails the install. ZETTA_NO_SKILL=1 skips it.
+install_skill() {
+	if [ "${ZETTA_NO_SKILL:-}" = 1 ]; then return 0; fi
+	z_skill=$("$z_bin" skill install --auto --output text </dev/null 2>/dev/null) || return 0
+	case "$z_skill" in
+	Installed* | Updated* | "Up to date"*) out "$z_skill" ;;
+	esac
 }
 
 main "$@"

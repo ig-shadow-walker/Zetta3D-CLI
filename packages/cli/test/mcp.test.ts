@@ -24,6 +24,15 @@ describe('MCP tools', () => {
     expect(names).not.toContain('mcp')
   })
 
+  it('never offers a tool that returns a new API key or charges a card', () => {
+    const names = mcpTools(COMMANDS).map(toolName)
+    expect(names).toContain('apikey_list')
+    expect(names).toContain('account_redeem')
+    expect(names).toContain('billing_checkout')
+    expect(names).not.toContain('apikey_create')
+    expect(names).not.toContain('billing_agent_plan')
+  })
+
   it('offers only read tools in read-only mode', () => {
     const tools = mcpTools(COMMANDS, true)
     expect(tools.every((t) => t.kind === 'read')).toBe(true)

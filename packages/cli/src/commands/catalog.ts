@@ -1,5 +1,15 @@
-import { ENGINES, REFINE_TOOLS, SPLAT_ENGINES, type PriceListItem } from '@zetta3d/sdk'
+import {
+  ENGINES,
+  MAX_WORLD_PICTURES,
+  MAX_WORLD_PICTURES_SAME_SPACE,
+  REFINE_TOOLS,
+  SPLAT_ASPECT_RATIOS,
+  SPLAT_ENGINES,
+  SPLAT_RESOLUTIONS,
+  type PriceListItem,
+} from '@zetta3d/sdk'
 import { z } from 'zod'
+import { publicImageEngines } from './image'
 import { defineCommand } from '../core/define'
 import { usageError } from '../core/errors'
 import { engineLabel } from '../core/jobs'
@@ -15,8 +25,9 @@ export const catalogEngines = defineCommand({
   }),
   async run(ctx, input) {
     if (input.images) {
-      const { models } = await (await ctx.client()).catalog.imageModels()
-      return { imageEngines: models.map((m) => ({ name: m.label.toLowerCase(), label: m.label, resolutions: m.resolutions, locked: Boolean(m.locked), lockedReason: m.lockedReason ?? null })) }
+      // Public names only (flash, pro, image-N), as --engine takes them: the server's own labels and ids stay out.
+      const engines = publicImageEngines(await (await ctx.client()).catalog.imageModels())
+      return { imageEngines: engines.map((e) => ({ name: e.name, resolutions: e.resolutions, locked: e.locked, lockedReason: e.lockedReason, default: e.default })) }
     }
     return {
       generate: Object.values(ENGINES).map((e) => ({
@@ -24,6 +35,7 @@ export const catalogEngines = defineCommand({
         flag: e.id === 'n25' ? 'n2.5' : e.id === 'np15' ? 'np1.5' : e.id,
         label: e.label,
         description: e.description,
+        tab: e.tab === 'smart' ? 'Generate Smart 3D' : 'Generate 3D',
         paidOnly: e.paidOnly,
         inputs: e.inputs,
         qualities: e.qualities,
@@ -35,15 +47,25 @@ export const catalogEngines = defineCommand({
         faceCounts: e.faceCounts,
         defaults: e.defaults,
       })),
-      splat: Object.values(SPLAT_ENGINES).map((e) => ({ id: e.id, flag: e.id === 'n25' ? 'splat' : e.id === 'zs2' ? 'splat2' : 'splat2.1', label: e.label, description: e.description, video: e.video, worldViews: e.worldViews })),
+      splat: Object.values(SPLAT_ENGINES).map((e) => ({
+        id: e.id,
+        flag: e.id === 'n25' ? 'splat' : e.id === 'zs2' ? 'splat2' : 'splat2.1',
+        label: e.label,
+        description: e.description,
+        video: e.video,
+        worldViews: e.worldViews,
+        maxPictures: e.worldViews ? { directions: MAX_WORLD_PICTURES, sameSpace: MAX_WORLD_PICTURES_SAME_SPACE } : 1,
+        promptPicture: { subjects: ['object', 'environment'], aspectRatios: SPLAT_ASPECT_RATIOS, resolutions: SPLAT_RESOLUTIONS },
+        exports: e.worldViews ? ['splat', 'mesh', 'collider'] : [],
+      })),
       refine: Object.values(REFINE_TOOLS).map((t) => ({ tool: t.id, command: `zetta refine ${t.id}`, label: t.label, description: t.description, accepts: t.accepts, options: t.options })),
     }
   },
   text: (r: { generate?: Array<Record<string, unknown>>; splat?: Array<Record<string, unknown>>; refine?: Array<Record<string, unknown>>; imageEngines?: Array<Record<string, unknown>> }) => {
     if (r.imageEngines) return table(r.imageEngines, ['name', 'resolutions', 'locked'])
     return [
-      '3D engines (zetta generate --engine <flag>):',
-      table(r.generate!.map((e) => ({ flag: e.flag, label: e.label, paid: e.paidOnly ? 'paid plans' : 'all plans', about: e.description }))),
+      '3D engines (zetta generate --engine <flag>; every generation needs a paid plan):',
+      table(r.generate!.map((e) => ({ flag: e.flag, label: e.label, tab: e.tab, about: e.description }))),
       '',
       'Splat engines (zetta splat create --engine <flag>):',
       table(r.splat!.map((e) => ({ flag: e.flag, label: e.label, about: e.description }))),
@@ -70,7 +92,7 @@ export const catalogPricing = defineCommand({
 
 export const catalogEntitlements = defineCommand({
   path: ['catalog', 'entitlements'],
-  summary: 'What your plan allows: engines, multi-view, low-poly, quads, private models, concurrency.',
+  summary: 'What your plan allows: generating at all, engines, multi-view, low-poly, quads, private models, concurrency.',
   kind: 'read',
   input: z.object({}),
   async run(ctx) {
@@ -81,7 +103,9 @@ export const catalogEntitlements = defineCommand({
     return {
       plan: threeD.plan,
       threeD: {
-        engines: { n1: true, n25: Boolean(e.allowsZettaN25), np1: Boolean(e.allowsZettaNp1), np15: Boolean(e.allowsZettaNp1) },
+        // No plan, no generating: an account without a paid plan cannot run any 3D or image job.
+        generate: Boolean(e.allowsPrivateGenerations),
+        engines: { n25: Boolean(e.allowsZettaN25), np1: Boolean(e.allowsZettaNp1), np15: Boolean(e.allowsZettaNp1) },
         finishingTools: Boolean(e.allowsPostProcess),
         splat: Boolean(e.allowsSplat ?? e.allowsPrivateGenerations),
         privateModels: Boolean(e.allowsPrivateGenerations),
@@ -100,13 +124,13 @@ export const catalogEntitlements = defineCommand({
 export const quote = defineCommand({
   path: ['quote'],
   summary: 'Price a raw operation spec (most people use --dry-run on the command instead).',
-  description: 'Example: zetta quote --base textured --modifier pbr --engine n25. Codes are listed by `zetta catalog pricing`.',
+  description: 'Example: zetta quote --base textured --modifier pbr --engine n25. Codes are listed by `zetta catalog pricing`. With no engine, n25 is priced.',
   kind: 'read',
   input: z.object({
     base: z.string().optional().describe('Generation base code: geometry_only, textured, lowpoly, gaussian_splat.'),
     modifier: z.array(z.string()).optional().describe('Modifier codes, e.g. multi_view, pbr, detailed_texture.'),
     postProcess: z.array(z.string()).optional().describe('Finishing-tool codes, e.g. auto_rigging.'),
-    engine: z.string().optional().describe('Engine id (n1, n25, np1, np15, r1, zs2, zs21).'),
+    engine: z.string().optional().describe('Engine id (n25, np1, np15, r1, zs2, zs21).'),
   }),
   async run(ctx, input) {
     if (!input.base && !input.postProcess?.length) throw usageError('Give --base or --post-process.')

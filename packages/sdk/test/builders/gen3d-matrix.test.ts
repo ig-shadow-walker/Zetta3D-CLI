@@ -96,3 +96,60 @@ describe.each(COMBINATIONS)('$label', ({ input }) => {
     expect(built.quote.model).toBe('n25')
   })
 })
+
+/*
+ * And every combination of the Generate Smart 3D options (Zetta Np1 and Np1.5): no quality rungs,
+ * three texture tiers, quads on Np1.5 only.
+ */
+const SMART: Combination[] = []
+for (const engine of ['np1', 'np15'] as const) {
+  for (const output of OUTPUTS) {
+    for (const pbr of [false, true]) {
+      for (const textureQuality of ['standard', 'detailed', 'extreme'] as const) {
+        for (const polygonType of POLYGON_TYPES) {
+          SMART.push({
+            label: `${engine}/${output}/pbr=${pbr}/tex=${textureQuality}/${polygonType}`,
+            input: { engine, imageUrl: 'https://cdn.example.com/uploads/a.png', output, pbr, textureQuality, polygonType },
+          })
+        }
+      }
+    }
+  }
+}
+
+it('covers the whole Smart space', () => {
+  expect(SMART).toHaveLength(48)
+})
+
+const smartConflicts = (input: GenerateInput): string[] => [
+  ...(input.pbr === true && input.output === 'geometry' ? ['PBR_NEEDS_TEXTURE'] : []),
+  ...(input.textureQuality !== 'standard' && input.output === 'geometry' ? ['TEXTURE_QUALITY_NEEDS_TEXTURE'] : []),
+  ...(input.engine === 'np1' && input.polygonType === 'quad' ? ['QUADS_NOT_SUPPORTED'] : []),
+]
+
+describe.each(SMART)('$label', ({ input }) => {
+  const built = buildGenerateRequest(input)
+
+  it('builds exactly when no explicit choice conflicts with another', () => {
+    const expected = smartConflicts(input)
+    expect(built.ok ? [] : built.problems.map((p) => p.code).sort()).toEqual([...expected].sort())
+  })
+
+  it('bills one texture tier at most, and only on a texture', () => {
+    if (!built.ok) return
+    const { base, modifiers = [] } = built.request.spec.generation ?? { base: '' }
+    const tiers = modifiers.filter((m) => m === 'detailed_texture' || m === 'extreme_texture')
+    expect(tiers.length).toBeLessThanOrEqual(1)
+    if (tiers.length) expect(base).toBe('textured')
+    expect(modifiers).not.toContain('detailed_geometry')
+  })
+
+  it('stays inside the engine’s polygon range by default, and sends quads only on Np1.5', () => {
+    if (!built.ok) return
+    const count = built.request.faceCount ?? 0
+    expect(count).toBeGreaterThanOrEqual(48)
+    expect(count).toBeLessThanOrEqual(input.engine === 'np1' ? 20_000 : input.polygonType === 'quad' ? 25_000 : 50_000)
+    expect(built.request.spec.generation?.modifiers).not.toContain('custom_face_count')
+    if (input.engine === 'np1') expect(built.request).not.toHaveProperty('polygonType')
+  })
+})

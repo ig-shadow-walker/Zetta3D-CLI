@@ -18,17 +18,24 @@ export type PortType = 'picture' | 'views' | 'mesh' | 'splat' | 'file'
 export const ALL_NODE_KINDS = [
   'seed_picture',
   'seed_model',
+  /** Pictures of each side — front, and back, left, right as given — chosen for each run. */
+  'seed_views',
   'remove_background',
   'ai_edit',
   'draw_views',
   'isolate_parts',
   'generate_3d',
   'generate_smart_3d',
+  /** The one-picture generations' own steps for pictures of each side. */
+  'generate_3d_multiview',
+  'generate_smart_3d_multiview',
   'generate_splat',
   'retopology',
   'segmentation',
   'smart_segmentation',
   'texture',
+  /** AI texturing from pictures of each side. */
+  'texture_multiview',
   'smart_uv',
   'rigging',
   'export',
@@ -88,6 +95,12 @@ export const PIPELINE_ERROR_CODES = {
   needsInput: 'RUN_NEEDS_INPUT',
   /** Auto mode, and the balance does not cover the estimate. Carries `required` and `available`. */
   insufficientCredits: 'INSUFFICIENT_CREDITS',
+  /** 403: runs and drafts need a paid plan. */
+  planRequired: 'PLAN_REQUIRED',
+  /** 403: an API key cannot change a pipeline, so a run or batch started with one cannot carry a `graph`. */
+  editNotAllowed: 'PIPELINE_EDIT_NOT_ALLOWED',
+  /** 403: an API key cannot run a recipe with a Generate Splat step. */
+  splatNotInApi: 'SPLAT_NOT_IN_API',
 } as const
 
 /** The 400 body of a refused run. */
@@ -152,12 +165,26 @@ export function isFinished(status: RunStatus): boolean {
   return status === 'done' || status === 'failed' || status === 'cancelled'
 }
 
+/** The sides a multi-view set may name — the Studio's four multi-view slots. The front is required. */
+export const VIEW_TYPES = ['front', 'back', 'left', 'right'] as const
+export type ViewType = (typeof VIEW_TYPES)[number]
+
+/** One picture of a multi-view set, as the server reads it: which side, and an upload or a library picture. */
+export type ViewSeed =
+  | { viewType: ViewType; uploadKey: string; name?: string }
+  | { viewType: ViewType; gen2dPostId: number; name?: string }
+
 /**
  * What one run starts from — the seed node's request for that run: an uploaded picture (the key the
- * upload relay returned, and its file name), a picture from the Image library, or a model from the 3D
- * library.
+ * upload relay returned, and its file name), a picture from the Image library, a model from the 3D
+ * library, or — for a Multi-view seed — pictures of each side (the front at least; `name` is the
+ * front's, as the Studio's run dialog sends it).
  */
-export type Seed = { uploadKey: string; name?: string } | { gen2dPostId: number } | { gen3dPostId: number }
+export type Seed =
+  | { uploadKey: string; name?: string }
+  | { gen2dPostId: number }
+  | { gen3dPostId: number }
+  | { views: ViewSeed[]; name?: string }
 
 /** A picture as a run returns it: a short-lived signed URL, and its library row when it is one. */
 export interface SignedPicture {
@@ -223,7 +250,7 @@ export interface PipelineRun {
   status: RunStatus
   /** The user paused it. `status` says what that means right now. */
   paused: boolean
-  /** What it started from: `{ type: 'picture' | 'model', ...the seed }`. */
+  /** What it started from: `{ type: 'picture' | 'model' | 'views', ...the seed }`. */
   seed: Record<string, unknown> | null
   estimatedCredits: number
   spentCredits: number
@@ -248,7 +275,7 @@ export interface PipelineRunSummary {
   progress: { done: number; total: number; waiting: number; failed: number }
   /** A draft's steps still to fill in before it can start. */
   inputsNeeded?: number
-  seed: { type: 'picture' | 'model'; name: string | null; thumbnailUrl: string | null } | null
+  seed: { type: 'picture' | 'model' | 'views'; name: string | null; thumbnailUrl: string | null } | null
 }
 
 /** One run as `POST /pipelines/:id/batch` returns it. */
@@ -318,18 +345,47 @@ export interface EstimatePipelineBody {
   graph: PipelineGraph
 }
 
-/** `POST /pipelines/:id/runs`: one run on the graph's own seed. The graph, when sent, is saved first. */
+/**
+ * `POST /pipelines/:id/runs`: one run on the graph's own seed. The graph, when sent, is saved first —
+ * so a request made with an API key may not carry one (403 `PIPELINE_EDIT_NOT_ALLOWED`); without it
+ * the run copies the pipeline as saved.
+ */
 export interface StartRunBody {
   mode: RunMode
   graph?: PipelineGraph
 }
 
-/** `POST /pipelines/:id/batch`: one run per seed (1 to 20). `draft` makes them without starting them. */
+/**
+ * `POST /pipelines/:id/batch`: one run per seed (1 to 20). `draft` makes them without starting them.
+ * Without `graph`, each run copies the pipeline as saved (a draft's AI texturing emptied, as the server
+ * does); with it, the graph is saved onto the pipeline first, which an API key may not do.
+ */
 export interface StartBatchBody {
   mode: RunMode
   seeds: Seed[]
   graph?: PipelineGraph
   draft?: boolean
+}
+
+/**
+ * `POST /pipelines/draft`: an AI drafts a recipe from a description (3 to 2,000 characters), or — with
+ * `graph` — changes that recipe as asked. Nothing is saved. Needs a paid plan; charges AI tokens; ten a
+ * minute.
+ */
+export interface DraftPipelineBody {
+  description: string
+  graph?: PipelineGraph
+}
+
+/**
+ * What a draft returns: a title, one line on what it made or changed, and the graph — laid out, its
+ * steps naming only the settings they change (no requests: `settingsWithDefaults` and `withRequests`
+ * finish it, as the editor does).
+ */
+export interface PipelineDraft {
+  title: string
+  summary: string
+  graph: PipelineGraph
 }
 
 /** `POST /pipeline-runs/:runId/mode`. */
@@ -364,6 +420,8 @@ export const PIPELINE_LIMITS = {
   maxBatchSeeds: 20,
   maxParts: 16,
   maxPartLabel: 80,
+  minDraftDescription: 3,
+  maxDraftDescription: 2000,
 } as const
 
 /** The prefix of Isolate Parts' per-part outputs: `part:<key>`. */

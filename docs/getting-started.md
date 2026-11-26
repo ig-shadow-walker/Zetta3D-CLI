@@ -22,14 +22,18 @@ Your browser opens zetta3d.ai. Sign in there if you aren't already, then click *
 
 ```
 Signed in as you@example.com (creator plan).
-Token saved in the system keychain; it expires 2026-11-20.
+Token saved in the system keychain; it expires 2026-12-26.
 ```
 
-No browser on this machine? Use `zetta auth login --email you@example.com`, then paste the link from the email. Copy the link; don't click it, because it works only once. See [authentication.md](authentication.md) for CI and agents.
+Other ways to sign in:
+- **No browser on this machine** (SSH, a container, a server), **CI, scripts and agents:** use an API key. Make one with `zetta apikey create <name>`, then set `ZETTA_API_KEY` wherever zetta runs. A key works until you revoke it.
+
+See [authentication.md](authentication.md) for every option.
 
 ## 3. Look around
 
 ```bash
+zetta account show            # your plan, trial and balances
 zetta account credits         # your balance: 1 credit = €0.01
 zetta catalog entitlements    # what your plan allows
 zetta catalog engines         # the engines and what each supports
@@ -38,6 +42,12 @@ zetta asset list              # your 3D library
 ```
 
 Every command has help: `zetta generate --help`, `zetta asset --help`. `zetta commands` lists them all.
+
+**No plan yet?** There is no free tier: making models and pictures needs a plan. See the plans with `zetta billing plans` and buy one with `zetta billing checkout <plan>`, or redeem a trial code for 10 days of the Basic plan:
+
+```bash
+zetta account redeem ZETTA-7KQ2-M9XD
+```
 
 ## 4. Make a model
 
@@ -70,8 +80,8 @@ While it works, one status line shows progress: uploading, queue position, proce
 The parts of that command:
 - **`--max-credits 60`** spends only if the price is at most 60. In a terminal you could leave it out and be asked to confirm instead; scripts and agents must pass it, or `--yes`.
 - **`--engine`** picks the engine:
-  - `n1` (the default) works on every plan;
-  - `n2.5`, `np1` and `np1.5` need a paid plan.
+  - `n2.5` (the default): quality levels, parts and quads;
+  - `np1` and `np1.5`: clean topology to a polygon budget, and textures up to 8K.
 - **`--out`** waits for the job and downloads the files.
 - **In a terminal,** finished jobs download into the current folder even without `--out`. `--no-download` (or `zetta config set download.auto false`) returns at once with the asset id instead; the job keeps running on the server. Scripts and agents always get the id at once unless they ask with `--out`, `--wait` or `--download`.
 
@@ -80,7 +90,7 @@ Other ways in:
 ```bash
 zetta generate -p "a stylised wooden treasure chest" --yes --wait                 # from text
 zetta generate --view front=f.png --view back=b.png --view left=l.png --view right=r.png --engine n2.5 --yes
-zetta generate -i product.jpg --remove-bg --engine np1.5 --texture-quality 8k --max-credits 200 --out .
+zetta generate -i product.jpg --remove-bg --engine np1.5 --texture-quality extreme --max-credits 200 --out .
 ```
 
 All the options are in [generating.md](generating.md).
@@ -101,17 +111,20 @@ zetta refine retopo 1234 --faces 5000 --yes --wait            # clean topology
 zetta asset rig-check 1235                                    # suggests a skeleton type
 zetta refine rig 1235 --rig-type biped --rig-format fbx --yes --out ./models
 zetta refine texture 1234 --prompt "weathered bronze" --tier hd --yes --wait
+zetta asset texture-map 1234 --map normal --out ./maps        # an AI normal map from the texture
 zetta asset export 1234 --format stl --out ./print            # free, on your machine
 ```
 
-Each finishing tool makes a new asset and leaves the original untouched. See [refining.md](refining.md).
+Each `refine` tool makes a new asset and leaves the original untouched. See [refining.md](refining.md), and [library.md](library.md#ai-texture-maps-paid-plans) for texture maps.
 
 ## 7. Share and organise
 
 ```bash
 zetta asset rename 1234 "Lounge chair"
 zetta asset tag 1234 --add furniture --add hero
-zetta asset share 1234          # prints a public link
+zetta asset share 1234                        # prints a public link
+zetta asset import ./sofa.fbx                 # bring in your own model (free)
+zetta asset replace 1234 ./chair-fixed.glb    # save an edited file over it (can't be undone)
 zetta asset delete 1240 --yes
 ```
 

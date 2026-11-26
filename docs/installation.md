@@ -32,6 +32,8 @@ What the installer does:
 5. **Adds the folder to your `PATH`:**
    - macOS and Linux: one line in `~/.zshrc`, `~/.bashrc`, `~/.config/fish/config.fish` or `~/.profile`, never twice;
    - Windows: your user `Path`.
+6. **Teaches your AI coding agents.** For each of Claude Code, Codex and Cursor it finds, it installs the Zetta 3D skill: `~/.claude/skills/zetta3d` and `~/.agents/skills/zetta3d`. See [the agent skill](ai-agents.md#the-agent-skill). `ZETTA_NO_SKILL=1` skips this step. Homebrew and npm installs do the same.
+7. **Signs you in.** In a terminal, it opens your browser so you can sign in to your Zetta 3D account and connect the CLI; then everything is available. If you're already signed in, it says so. It skips this in CI, without a terminal, when `ZETTA_API_KEY` is set, or with `ZETTA_NO_LOGIN=1`; then run `zetta auth login` yourself. On a server or over SSH, use an API key instead (see [authentication.md](authentication.md)).
 
 Open a new terminal (or `source` your shell's rc file), then check:
 
@@ -72,9 +74,12 @@ zetta upgrade --check      # only check
 zetta upgrade --to 0.2.0   # a specific version (also to go back)
 ```
 
-`zetta upgrade` downloads and verifies the new binary the same way the installer does, test-runs it, then swaps it in place. Re-running the installer does the same.
+`zetta upgrade` downloads and verifies the new binary the same way the installer does, test-runs it, then swaps it in place. Re-running the installer does the same. The agent skill updates itself the next time the new version runs.
 
-If you run zetta in a terminal, it checks for a new release once a day and prints a one-line notice. It never does this when output is piped or in CI. Turn it off with `ZETTA_NO_UPDATE_CHECK=1`.
+**Knowing when there's a new version:**
+- **At a terminal:** zetta checks for a new release at most once an hour (one small request) and says so: "zetta 0.2.0 is out (you have 0.1.0). Update with: zetta upgrade". The same version is mentioned at most twice a day. It never checks when output is piped, in CI, or with `ZETTA_NO_UPDATE_CHECK=1`.
+- **For agents:** the skill tells them to run `zetta upgrade --check` and tell you. The MCP server mentions a newer version in its instructions, and `zetta doctor` reports it.
+- **Homebrew and npm installs** are upgraded with `brew upgrade zetta` or `npm install -g @zetta3d/cli@latest`. The notice and `zetta upgrade` say so.
 
 ## Uninstalling
 
@@ -91,7 +96,7 @@ Windows:
 - Delete `%LOCALAPPDATA%\zetta` and `%APPDATA%\zetta3d`.
 - Remove the zetta entry from your user `Path` (System Properties → Environment Variables).
 
-If you installed an agent integration, remove it too: `zetta skill uninstall` (run it before deleting the program), and the `zetta3d` entry from your MCP client's config.
+Remove the agent skill too, before deleting the program: `zetta skill uninstall`. If you set up an MCP client, also remove the `zetta3d` entry from its config.
 
 ## In CI
 
@@ -100,7 +105,7 @@ If you installed an agent integration, remove it too: `zetta skill uninstall` (r
 - run: curl -fsSL https://zetta3d.ai/install.sh | sh     # also adds zetta to $GITHUB_PATH
 - run: zetta asset list
   env:
-    ZETTA_TOKEN: ${{ secrets.ZETTA_TOKEN }}
+    ZETTA_API_KEY: ${{ secrets.ZETTA_API_KEY }}   # make one with `zetta apikey create ci`
 ```
 
 Without a terminal the CLI never prompts. A paid command needs `--yes` or `--max-credits` (or a `spend.maxPerCommand` setting), or it exits with code 5 without spending anything.

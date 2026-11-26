@@ -6,13 +6,16 @@
  */
 import { NODE_KINDS, type NodeKindSpec, type SettingSpec } from './catalogue'
 import type { PipelineDoc } from './doc'
-import { ALL_NODE_KINDS } from './types'
+import { ALL_NODE_KINDS, VIEW_TYPES } from './types'
 
 type Json = Record<string, unknown>
 
+/** The choices a document is offered: a retired engine is still read, but never suggested. */
+const offeredChoices = (spec: SettingSpec) => (spec.choices ?? []).filter((choice) => !choice.retired)
+
 function choicesText(spec: SettingSpec): string {
   if (!spec.choices) return ''
-  const described = spec.choices.filter((choice) => choice.description || choice.label !== choice.value)
+  const described = offeredChoices(spec).filter((choice) => choice.description || choice.label !== choice.value)
   if (!described.length) return ''
   return (
     ' Values: ' +
@@ -45,13 +48,13 @@ function settingSchema(spec: SettingSpec): Json {
       })
     case 'enum':
       return withDefault({
-        enum: [...(spec.choices ?? []).map((choice) => choice.value), ...(spec.nullable ? [null] : [])],
+        enum: [...offeredChoices(spec).map((choice) => choice.value), ...(spec.nullable ? [null] : [])],
         description,
       })
     case 'enum-list':
       return withDefault({
         type: 'array',
-        items: { enum: (spec.choices ?? []).map((choice) => choice.value) },
+        items: { enum: offeredChoices(spec).map((choice) => choice.value) },
         uniqueItems: true,
         description,
       })
@@ -67,6 +70,8 @@ function settingSchema(spec: SettingSpec): Json {
         anyOf: [{ $ref: '#/$defs/picture' }, ...(spec.nullable ? [{ type: 'null' }] : [])],
         description,
       }
+    case 'view-set':
+      return withDefault({ $ref: '#/$defs/viewSet', description })
   }
 }
 
@@ -120,12 +125,14 @@ export const PIPELINE_DOC_JSON_SCHEMA: Json = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   title: 'Zetta 3D pipeline',
   description:
-    'A 3D pipeline: steps keyed by id, each a Studio tool, wired from ONE seed step (seed_picture or seed_model). ' +
+    'A 3D pipeline: steps keyed by id, each a Studio tool, wired from ONE seed step (seed_picture, seed_model or seed_views). ' +
     'Each step names the step it follows in `from`. Settings are written inline; anything left out keeps the ' +
-    'Studio default. The pipeline keeps no seed asset: each run is given its picture or model. Typical chains: ' +
+    'Studio default. The pipeline keeps no seed asset: each run is given its picture, its model, or its pictures of each side. Typical chains: ' +
     'seed_picture → remove_background → generate_3d → retopology → rigging; ' +
-    'seed_picture → isolate_parts → (character) draw_views → generate_3d and (each) generate_smart_3d; ' +
-    'seed_model → retopology → smart_uv → texture.',
+    'seed_picture → isolate_parts → (character) draw_views → generate_3d_multiview and (each) generate_smart_3d; ' +
+    'seed_views → generate_smart_3d_multiview → texture_multiview (views from the seed); ' +
+    'seed_model → retopology → smart_uv → texture. One picture goes to generate_3d / generate_smart_3d; ' +
+    'pictures of each side (seed_views, draw_views) only to the *_multiview steps.',
   type: 'object',
   required: ['steps'],
   additionalProperties: false,
@@ -185,6 +192,12 @@ export const PIPELINE_DOC_JSON_SCHEMA: Json = {
         },
       ],
     },
+    viewSet: {
+      description: 'Pictures of each side, the front at least. Empty ({}) means none given.',
+      type: 'object',
+      properties: Object.fromEntries(VIEW_TYPES.map((side) => [side, { $ref: '#/$defs/picture' }])),
+      additionalProperties: false,
+    },
     step: {
       description: 'One step. `kind` decides which settings it takes.',
       oneOf: ALL_NODE_KINDS.map((kind) => ({ $ref: `#/$defs/${kind}` })),
@@ -199,7 +212,7 @@ export interface PipelineDocExample {
   doc: PipelineDoc
 }
 
-/** Three realistic documents, each one that compiles and validates. */
+/** Four realistic documents, each one that compiles and validates. */
 export const PIPELINE_DOC_EXAMPLES: readonly PipelineDocExample[] = [
   {
     name: 'picture-to-rigged-character',
@@ -229,7 +242,7 @@ export const PIPELINE_DOC_EXAMPLES: readonly PipelineDocExample[] = [
         photo: { kind: 'seed_picture' },
         split: { kind: 'isolate_parts', from: 'photo', sensitivity: 'low', pose: 'a', maxParts: 4 },
         views: { kind: 'draw_views', from: 'split.character' },
-        hero: { kind: 'generate_3d', from: 'views', engine: 'n25', quality: 'high' },
+        hero: { kind: 'generate_3d_multiview', from: 'views', engine: 'n25', quality: 'high' },
         heroRig: { kind: 'rigging', from: 'hero', rigType: 'biped', rigSpec: 'mixamo', format: 'fbx' },
         props: { kind: 'generate_smart_3d', from: 'split.each', engine: 'np15', polygonCount: 8000 },
         propsUv: { kind: 'smart_uv', from: 'props' },
@@ -248,6 +261,22 @@ export const PIPELINE_DOC_EXAMPLES: readonly PipelineDocExample[] = [
         topo: { kind: 'retopology', from: 'source', engine: 'r1', faces: 8000, polygonType: 'quad' },
         uv: { kind: 'smart_uv', from: 'topo' },
         paint: { kind: 'texture', from: 'uv', tier: 'detailed' },
+      },
+    },
+  },
+  {
+    name: 'product-from-photos-of-each-side',
+    description:
+      'Each run gives photos of a product from each side (front required; back, left, right as you have them): one clean multi-view ' +
+      'model on Zetta Np1.5, retextured in detail from the same photos, with a fresh UV layout.',
+    doc: {
+      version: 1,
+      title: 'Product from photos of each side',
+      steps: {
+        photos: { kind: 'seed_views' },
+        model: { kind: 'generate_smart_3d_multiview', from: 'photos', engine: 'np15', polygonCount: 12000 },
+        paint: { kind: 'texture_multiview', from: { in: 'model', views: 'photos' }, tier: 'detailed' },
+        uv: { kind: 'smart_uv', from: 'paint' },
       },
     },
   },

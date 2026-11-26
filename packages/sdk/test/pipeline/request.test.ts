@@ -5,6 +5,7 @@ import {
   nodeProblems,
   requestFor,
   settingsWithDefaults,
+  viewsRequest,
   withRequests,
   type PipelineGraph,
 } from '../../src/pipeline'
@@ -23,6 +24,51 @@ describe('requestFor — parity with the web editor’s node-config tests', () =
   it('prices views coming in as a multi-view job', () => {
     const request = req('generate_3d', undefined, 'views')
     expect((request.spec as { generation: { modifiers: string[] } }).generation.modifiers).toContain('multi_view')
+  })
+})
+
+/* MULTI-VIEW IN PIPELINES — the web's multi-view.test vectors. */
+describe('requestFor — the multi-view steps', () => {
+  it('a Multi-view seed sends nothing: each run gives its pictures', () => {
+    expect(req('seed_views', {})).toEqual({})
+  })
+
+  it('always builds a multi-view generation, whatever is wired in', () => {
+    for (const kind of ['generate_3d_multiview', 'generate_smart_3d_multiview'] as const) {
+      const request = req(kind)
+      expect((request.spec as { generation: { modifiers: string[] } }).generation.modifiers, kind).toContain('multi_view')
+    }
+    expect(req('generate_3d_multiview').model).toBe('n25')
+    expect(req('generate_smart_3d_multiview').model).toBe('np1')
+    // The same form as the one-picture step, built as the Studio's Multi-View to 3D builds it.
+    expect(req('generate_3d_multiview')).toEqual(req('generate_3d', undefined, 'views'))
+  })
+
+  it('sends the pictures of each side in place of a description or one picture', () => {
+    const request = req('texture_multiview', {
+      ...defaultSettings('texture_multiview'),
+      prompt: 'stale',
+      referenceViews: { front: { uploadKey: 'inputImg/7/f.png' }, right: { gen2dPostId: 4 } },
+    })
+    expect(request).toMatchObject({
+      spec: { postProcess: ['retexture'] },
+      referenceViews: [
+        { viewType: 'front', uploadKey: 'inputImg/7/f.png' },
+        { viewType: 'right', gen2dPostId: 4 },
+      ],
+      removeReferenceBackground: true,
+    })
+    expect(request.prompt).toBeUndefined()
+    expect(req('texture_multiview')).toMatchObject({ referenceViews: [] })
+  })
+
+  it('lists a set’s sides in the slots’ order, each once, with its name', () => {
+    expect(
+      viewsRequest({ right: { uploadKey: 'r' }, front: { gen2dPostId: 9, name: 'Chair' }, top: { uploadKey: 't' }, back: {} }),
+    ).toEqual([
+      { viewType: 'front', gen2dPostId: 9, name: 'Chair' },
+      { viewType: 'right', uploadKey: 'r' },
+    ])
   })
 
   it('sends a post-process as the Studio panel’s hook would, minus its origin', () => {
@@ -119,13 +165,16 @@ describe('requestFor — every kind, with its defaults', () => {
     })
   })
 
-  it('retopology sends a count on R1 and a level on N1, never both', () => {
+  it('retopology sends an exact count — never a level, now that Zetta N1 is retired — and unwraps UVs when asked', () => {
     expect(req('retopology')).toEqual({ spec: { postProcess: ['smart_topology'] }, model: 'r1', faceCount: 8000, polygonType: 'triangle' })
     expect(req('retopology', { ...defaultSettings('retopology'), bake: false })).toMatchObject({ bake: false })
+    expect(req('retopology', { ...defaultSettings('retopology'), unwrapUvs: true })).toMatchObject({ unwrapUvs: true })
+    expect(req('retopology')).not.toHaveProperty('unwrapUvs')
+    // An older recipe still on N1: the server runs it on R1, so it is sent as R1's would be.
     expect(req('retopology', { ...defaultSettings('retopology'), engine: 'n1', faceLevel: 'high' })).toEqual({
       spec: { postProcess: ['smart_topology'] },
       model: 'n1',
-      faceLevel: 'high',
+      faceCount: 8000,
       polygonType: 'triangle',
     })
   })
@@ -175,14 +224,22 @@ describe('requestFor — every kind, with its defaults', () => {
     })
   })
 
-  it('rigging sends each choice only when it is not the default', () => {
+  it('rigging sends each choice only when it is not the default, and a bone naming for a humanoid only', () => {
     expect(req('rigging')).toEqual({ spec: { postProcess: ['auto_rigging'] } })
-    expect(req('rigging', { rigType: 'quadruped', spec: 'mixamo', outFormat: 'fbx' })).toEqual({
+    expect(req('rigging', { rigType: 'biped', spec: 'mixamo', outFormat: 'fbx' })).toEqual({
       spec: { postProcess: ['auto_rigging'] },
-      rigType: 'quadruped',
       rigSpec: 'mixamo',
       rigOutFormat: 'fbx',
     })
+    expect(req('rigging', { rigType: 'quadruped', spec: 'mixamo', outFormat: 'fbx' })).toEqual({
+      spec: { postProcess: ['auto_rigging'] },
+      rigType: 'quadruped',
+      rigOutFormat: 'fbx',
+    })
+    for (const spec of ['unity', 'unreal', 'vrm', 'actorcore']) {
+      expect(req('rigging', { rigType: 'biped', spec, outFormat: 'glb' }).rigSpec).toBe(spec)
+    }
+    expect(req('rigging', { rigType: 'others', spec: 'standard', outFormat: 'glb' })).toMatchObject({ rigType: 'others' })
   })
 
   it('rigging never sends a bone naming the Studio does not offer', () => {

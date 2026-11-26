@@ -25,10 +25,25 @@ export function toQuery(query: QueryInput | undefined): string {
   return text ? `?${text}` : ''
 }
 
+/**
+ * A session token (from the browser hand-off or an emailed link) or an API key (`zk_live_…`).
+ * Both are sent as `Authorization: Bearer …`; the server tells them apart by the `zk_` prefix.
+ */
 export type TokenSource = string | undefined | (() => string | undefined | Promise<string | undefined>)
+
+export interface RetryInfo {
+  method: string
+  url: string
+  /** The attempt that failed. */
+  attempt: number
+  status: number
+  /** How long the transport waits before the next attempt. */
+  waitMs: number
+}
 
 export interface TransportOptions {
   baseUrl?: string
+  /** A session token or an API key. */
   token?: TokenSource
   /** Sent as `X-Zetta-Client`, so usage can be attributed per client. */
   clientName?: string
@@ -40,6 +55,8 @@ export interface TransportOptions {
   timeoutMs?: number
   /** Called for every attempt; useful for `--verbose`. Never receives the token. */
   onRequest?: (info: { method: string; url: string; attempt: number }) => void
+  /** Called before waiting to retry a failed attempt (a 429 after its Retry-After, a 5xx, a dropped connection). */
+  onRetry?: (info: RetryInfo) => void
   /** Wait function, replaceable in tests. */
   sleep?: (ms: number) => Promise<void>
 }
@@ -61,15 +78,29 @@ export interface RequestOptions {
 }
 
 const BACKOFF_MS = [600, 1800, 4000]
-const MAX_RETRY_AFTER_MS = 30_000
+/**
+ * The longest Retry-After the transport waits out by itself. A per-minute limit asks for at most a
+ * minute; anything longer (an hourly limit) fails at once, with the wait in `details.retryAfter`,
+ * rather than leaving a command hanging silently.
+ */
+const MAX_RETRY_AFTER_MS = 60_000
 
+/** Retry-After as milliseconds (seconds or an HTTP date), uncapped. */
 function retryAfterMs(header: string | null): number | undefined {
   if (!header) return undefined
   const seconds = Number(header)
-  if (Number.isFinite(seconds)) return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS)
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000)
   const date = Date.parse(header)
-  if (Number.isFinite(date)) return Math.min(Math.max(0, date - Date.now()), MAX_RETRY_AFTER_MS)
+  if (Number.isFinite(date)) return Math.max(0, date - Date.now())
   return undefined
+}
+
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin
+  } catch {
+    return false
+  }
 }
 
 export class Transport {
@@ -81,6 +112,7 @@ export class Transport {
   private readonly retries: number
   private readonly timeoutMs: number
   private readonly onRequest: TransportOptions['onRequest']
+  private readonly onRetry: TransportOptions['onRetry']
   private readonly sleep: (ms: number) => Promise<void>
 
   constructor(options: TransportOptions = {}) {
@@ -92,6 +124,7 @@ export class Transport {
     this.retries = options.retries ?? 2
     this.timeoutMs = options.timeoutMs ?? 60_000
     this.onRequest = options.onRequest
+    this.onRetry = options.onRetry
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
   }
 
@@ -130,7 +163,8 @@ export class Transport {
       body = JSON.stringify(options.body)
     }
 
-    if (options.auth !== false) {
+    // Credentials go to the API's own origin only, never to an absolute URL elsewhere.
+    if (options.auth !== false && sameOrigin(url, this.baseUrl)) {
       const token = await this.resolveToken()
       if (token) headers.Authorization = `Bearer ${token}`
     }
@@ -159,7 +193,9 @@ export class Transport {
           cause,
         })
         if (replayable && attempt < maxAttempts) {
-          await this.sleep(BACKOFF_MS[attempt - 1] ?? 4000)
+          const waitMs = BACKOFF_MS[attempt - 1] ?? 4000
+          this.onRetry?.({ method: upper, url, attempt, status: 0, waitMs })
+          await this.sleep(waitMs)
           continue
         }
         throw lastError
@@ -168,11 +204,16 @@ export class Transport {
       if (response.ok) return response
 
       const parsed = await parseBody(response).catch(() => undefined)
-      lastError = errorFromResponse(response.status, parsed, response.headers.get('retry-after'))
+      const retryAfter = response.headers.get('retry-after')
+      lastError = errorFromResponse(response.status, parsed, retryAfter)
+      // 429 means the server did not process the request, so it is safe to repeat even a plain POST.
       const retryable = response.status === 429 || (response.status >= 500 && replayable)
-      if (retryable && attempt < maxAttempts) {
-        const wait = retryAfterMs(response.headers.get('retry-after')) ?? BACKOFF_MS[attempt - 1] ?? 4000
-        await this.sleep(wait)
+      const askedWait = retryAfterMs(retryAfter)
+      const tooLong = askedWait !== undefined && askedWait > MAX_RETRY_AFTER_MS
+      if (retryable && !tooLong && attempt < maxAttempts) {
+        const waitMs = askedWait ?? BACKOFF_MS[attempt - 1] ?? 4000
+        this.onRetry?.({ method: upper, url, attempt, status: response.status, waitMs })
+        await this.sleep(waitMs)
         continue
       }
       throw lastError

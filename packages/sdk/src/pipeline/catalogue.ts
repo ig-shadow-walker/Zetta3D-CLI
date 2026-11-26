@@ -49,6 +49,8 @@ export type SettingType =
   | 'string-list'
   /** A picture: `{ uploadKey, name? }` (an upload) or `{ gen2dPostId }` (an Image library picture). */
   | 'picture'
+  /** Pictures of each side: `{ front: picture, back?: picture, left?: picture, right?: picture }`. */
+  | 'view-set'
 
 export interface SettingChoice {
   /** The friendly value a document writes. */
@@ -59,6 +61,8 @@ export interface SettingChoice {
   description?: string
   /** Other spellings accepted on input (matched case-insensitively, like `value`). */
   aliases?: readonly string[]
+  /** Still read (an older recipe may hold it), but no longer offered: the engine was retired. */
+  retired?: boolean
 }
 
 export interface SettingSpec {
@@ -159,12 +163,12 @@ function generateSettings(engines: readonly SettingChoice[], defaultEngine: stri
           raw: 'high-res',
           label: 'High-Res',
           aliases: ['high-res', 'highres'],
-          description: 'The usual density. On Zetta N1, 200,000 polygons.',
+          description: 'The usual density.',
         },
         {
           value: 'ultra',
           label: 'Ultra',
-          description: 'The densest mesh. On Zetta N1, 1,000,000 polygons; on Zetta N2.5 a paid extra.',
+          description: 'The densest mesh; on Zetta N2.5 a paid extra.',
         },
       ],
       description:
@@ -191,9 +195,8 @@ function generateSettings(engines: readonly SettingChoice[], defaultEngine: stri
       min: 1,
       description:
         'The polygon budget. Omit to use the rung’s preset. A count other than the preset is a paid extra. ' +
-        'Bounds: Zetta N1 3,100–1,480,000; Zetta N2.5 per rung (low 1,000–20,000, high 1,000–1,000,000, ultra 1,000–2,000,000; ' +
-        'quads 500–10,000 / 1,000–150,000); Zetta Np1 48–20,000; Zetta Np1.5 48–50,000 (quads 48–25,000). ' +
-        'On Zetta N1 a count also moves the rung, as typing it in the Studio does.',
+        'Bounds: Zetta N2.5 per rung (low 1,000–20,000, high 1,000–1,000,000, ultra 1,000–2,000,000; ' +
+        'quads 500–10,000 / 1,000–150,000); Zetta Np1 48–20,000; Zetta Np1.5 48–50,000 (quads 48–25,000).',
     },
     {
       name: 'polygonType',
@@ -201,7 +204,7 @@ function generateSettings(engines: readonly SettingChoice[], defaultEngine: stri
       type: 'enum',
       default: 'triangle',
       choices: POLYGON_TYPES,
-      description: 'Triangles or quads. On Zetta N1 quads apply to the low rung only; Zetta Np1 has triangles only.',
+      description: 'Triangles or quads. Zetta Np1 has triangles only.',
     },
     BOOL('removeBackground', 'Cut the subject out of its background before generating.', true),
     {
@@ -306,12 +309,56 @@ const SEGMENT_SETTINGS = (defaultMode: 'segment' | 'smart'): SettingSpec[] => [
 
 const MESH_IN: readonly InputPortSpec[] = [{ handle: 'in', label: 'Model', accepts: ['mesh'], required: true }]
 const PICTURE_IN: readonly InputPortSpec[] = [{ handle: 'in', label: 'Picture', accepts: ['picture'], required: true }]
-const PICTURE_OR_VIEWS_IN: readonly InputPortSpec[] = [
-  { handle: 'in', label: 'Picture or views', accepts: ['picture', 'views'], required: true },
-]
+const VIEWS_IN: readonly InputPortSpec[] = [{ handle: 'in', label: 'Views', accepts: ['views'], required: true }]
 const MESH_OUT: readonly OutputPortSpec[] = [{ handle: 'out', label: 'Model', type: 'mesh' }]
 const PICTURE_OUT: readonly OutputPortSpec[] = [{ handle: 'out', label: 'Picture', type: 'picture' }]
 const NO_RUN_INPUT = { kind: 'none' as const, description: 'Everything it needs is in the recipe.' }
+
+/** The generate engines. Zetta N1 was retired: a recipe that still names it loads, but its step fails when it runs. */
+const GENERATE_ENGINE_CHOICES: readonly SettingChoice[] = [
+  {
+    value: 'n1',
+    label: 'Zetta N1',
+    retired: true,
+    description: 'Retired: the server refuses it, so the step fails when it runs. Use n25.',
+  },
+  { value: 'n25', label: 'Zetta N2.5', description: 'The highest quality of mesh and texture.' },
+]
+const SMART_ENGINE_CHOICES: readonly SettingChoice[] = [
+  { value: 'np1', label: 'Zetta Np1', description: 'Clean topology, balanced quality.' },
+  { value: 'np15', label: 'Zetta Np1.5', description: 'Clean topology, quad native.' },
+]
+
+/** AI texturing's settings shared by its one-picture and multi-view steps. */
+const TEXTURE_TIER: SettingSpec = {
+  name: 'tier',
+  key: 'tier',
+  type: 'enum',
+  default: 'standard',
+  choices: [
+    { value: 'standard', raw: 'retexture', label: 'Standard', aliases: ['retexture', '2k'], description: '2K textures.' },
+    { value: 'detailed', raw: 'retexture_hd', label: 'Detailed', aliases: ['retexture_hd', 'hd', '4k'], description: '4K textures.' },
+    { value: '8k', raw: 'retexture_8k', label: '8K', aliases: ['retexture_8k', 'extreme'], description: '8K textures.' },
+  ],
+  description: 'The texture tier — each is priced on its own.',
+}
+const TEXTURE_FINISH: readonly SettingSpec[] = [
+  {
+    name: 'alignment',
+    key: 'alignment',
+    type: 'enum',
+    default: 'picture',
+    choices: [
+      { value: 'picture', raw: 'original_image', label: 'Fit texture to picture', aliases: ['original_image', 'image'] },
+      { value: 'mesh', raw: 'geometry', label: 'Fit texture to mesh', aliases: ['geometry'] },
+    ],
+    description: 'When the picture and the mesh disagree, which the texture follows.',
+  },
+  BOOL('bake', 'Bake the result into the textures.', true),
+  BOOL('pbr', 'PBR materials (free on a retexture).', true),
+  BOOL('fast', 'The standard tier’s faster setting.', false),
+  BOOL('delight', 'Strip the reference’s baked-in lighting.', true),
+]
 
 /* ---------------------------------------------------------------------------- catalogue */
 
@@ -346,6 +393,26 @@ export const NODE_KINDS: Readonly<Record<NodeKind, NodeKindSpec>> = {
     outputs: MESH_OUT,
     settings: [],
     runInput: { kind: 'seed', description: 'Each run is given its model ({gen3dPostId}).' },
+  },
+  seed_views: {
+    kind: 'seed_views',
+    label: 'Multi-view seed',
+    description:
+      'Pictures of each side — front, back, left, right — the pipeline starts from, for a multi-view generation. ' +
+      'The pipeline keeps no pictures: each run gives its own set, the front at least.',
+    group: 'seed',
+    offered: true,
+    legacy: false,
+    threeD: false,
+    engineChoice: false,
+    inputs: [],
+    outputs: [{ handle: 'out', label: 'Views', type: 'views' }],
+    settings: [],
+    runInput: {
+      kind: 'seed',
+      description:
+        'Each run is given its pictures of each side: { views: [{ viewType: front|back|left|right, uploadKey | gen2dPostId, name? }], name? } — a front one at least, each side once.',
+    },
   },
   remove_background: {
     kind: 'remove_background',
@@ -393,7 +460,9 @@ export const NODE_KINDS: Readonly<Record<NodeKind, NodeKindSpec>> = {
   draw_views: {
     kind: 'draw_views',
     label: 'Draw views',
-    description: 'Draws the back and sides from one picture (the incoming picture is the front), for a multi-view generation.',
+    description:
+      'Draws the back and sides from one picture (the incoming picture is the front), for a multi-view step: ' +
+      'generate_3d_multiview, generate_smart_3d_multiview, or texture_multiview’s views.',
     group: 'picture',
     offered: true,
     legacy: false,
@@ -497,41 +566,60 @@ export const NODE_KINDS: Readonly<Record<NodeKind, NodeKindSpec>> = {
   generate_3d: {
     kind: 'generate_3d',
     label: 'Generate 3D',
-    description: 'A model from a picture, or from several views (wire a Draw views step in for a multi-view job).',
+    description: 'A model from one picture. For pictures of each side (a Multi-view seed or Draw views), use generate_3d_multiview.',
     group: 'make',
     offered: true,
     legacy: false,
     threeD: true,
     engineChoice: true,
-    inputs: PICTURE_OR_VIEWS_IN,
+    inputs: PICTURE_IN,
     outputs: MESH_OUT,
-    settings: generateSettings(
-      [
-        { value: 'n1', label: 'Zetta N1', description: 'The base model.' },
-        { value: 'n25', label: 'Zetta N2.5', description: 'The highest quality of mesh and texture.' },
-      ],
-      'n25',
-    ),
+    settings: generateSettings(GENERATE_ENGINE_CHOICES, 'n25'),
     runInput: NO_RUN_INPUT,
   },
   generate_smart_3d: {
     kind: 'generate_smart_3d',
     label: 'Generate Smart 3D',
-    description: 'Clean, low topology to a face budget, from a picture or views.',
+    description:
+      'Clean, low topology to a face budget, from one picture. For pictures of each side, use generate_smart_3d_multiview.',
     group: 'make',
     offered: true,
     legacy: false,
     threeD: true,
     engineChoice: true,
-    inputs: PICTURE_OR_VIEWS_IN,
+    inputs: PICTURE_IN,
     outputs: MESH_OUT,
-    settings: generateSettings(
-      [
-        { value: 'np1', label: 'Zetta Np1', description: 'Clean topology, balanced quality.' },
-        { value: 'np15', label: 'Zetta Np1.5', description: 'Clean topology, quad native.' },
-      ],
-      'np1',
-    ),
+    settings: generateSettings(SMART_ENGINE_CHOICES, 'np1'),
+    runInput: NO_RUN_INPUT,
+  },
+  generate_3d_multiview: {
+    kind: 'generate_3d_multiview',
+    label: 'Multi-view - Generate 3D',
+    description:
+      'A model from pictures of each side — wire a Multi-view seed or Draw views in. Always a multi-view job; never fed a single picture.',
+    group: 'make',
+    offered: true,
+    legacy: false,
+    threeD: true,
+    engineChoice: true,
+    inputs: VIEWS_IN,
+    outputs: MESH_OUT,
+    settings: generateSettings(GENERATE_ENGINE_CHOICES, 'n25'),
+    runInput: NO_RUN_INPUT,
+  },
+  generate_smart_3d_multiview: {
+    kind: 'generate_smart_3d_multiview',
+    label: 'Multi-view - Smart 3D',
+    description:
+      'Clean, low topology to a face budget from pictures of each side — wire a Multi-view seed or Draw views in.',
+    group: 'make',
+    offered: true,
+    legacy: false,
+    threeD: true,
+    engineChoice: true,
+    inputs: VIEWS_IN,
+    outputs: MESH_OUT,
+    settings: generateSettings(SMART_ENGINE_CHOICES, 'np1'),
     runInput: NO_RUN_INPUT,
   },
   generate_splat: {
@@ -616,10 +704,10 @@ export const NODE_KINDS: Readonly<Record<NodeKind, NodeKindSpec>> = {
         type: 'enum',
         default: 'r1',
         choices: [
-          { value: 'r1', label: 'Zetta R1', description: 'An exact budget up to 20,000 polygons. Faster, and less than half the price.' },
-          { value: 'n1', label: 'Zetta N1', description: 'No polygon ceiling — for a dense mesh. Takes a face level, not a count.' },
+          { value: 'r1', label: 'Zetta R1', description: 'An exact budget up to 20,000 polygons.' },
+          { value: 'n1', label: 'Zetta N1', retired: true, description: 'Retired: the server runs the step on Zetta R1.' },
         ],
-        description: 'The retopology engine.',
+        description: 'The retopology engine: Zetta R1.',
       },
       {
         name: 'faces',
@@ -628,7 +716,7 @@ export const NODE_KINDS: Readonly<Record<NodeKind, NodeKindSpec>> = {
         default: 8_000,
         min: 500,
         max: 20_000,
-        description: 'Zetta R1 only: the exact polygon budget, 500–20,000 triangles or 500–10,000 quads.',
+        description: 'The exact polygon budget, 500–20,000 triangles or 500–10,000 quads.',
       },
       {
         name: 'faceLevel',
@@ -636,14 +724,15 @@ export const NODE_KINDS: Readonly<Record<NodeKind, NodeKindSpec>> = {
         type: 'enum',
         default: 'medium',
         choices: [
-          { value: 'low', label: 'Low', description: 'Fewest polygons — game-ready.' },
+          { value: 'low', label: 'Low' },
           { value: 'medium', label: 'Medium' },
-          { value: 'high', label: 'High', description: 'Keeps the most detail.' },
+          { value: 'high', label: 'High' },
         ],
-        description: 'Zetta N1 only: how dense the new mesh is.',
+        description: 'The retired Zetta N1’s density level. Kept so an older recipe loads; never sent — use faces.',
       },
       { name: 'polygonType', key: 'polygonType', type: 'enum', default: 'triangle', choices: POLYGON_TYPES, description: 'Triangles or quads.' },
-      BOOL('bake', 'Zetta R1 only: bake the textures onto the new mesh.', true),
+      BOOL('bake', 'Bake the textures onto the new mesh.', true),
+      BOOL('unwrapUvs', 'Unwrap UVs in the same job, at no extra cost (no UV atlas picture: Smart UV makes one).', false),
     ],
     runInput: NO_RUN_INPUT,
   },
@@ -678,7 +767,7 @@ export const NODE_KINDS: Readonly<Record<NodeKind, NodeKindSpec>> = {
   texture: {
     kind: 'texture',
     label: 'AI texturing',
-    description: 'New textures for the model, from a reference picture or a description.',
+    description: 'New textures for the model, from a reference picture or a description. For pictures of each side, use texture_multiview.',
     group: 'refine',
     offered: true,
     legacy: false,
@@ -690,18 +779,7 @@ export const NODE_KINDS: Readonly<Record<NodeKind, NodeKindSpec>> = {
     ],
     outputs: MESH_OUT,
     settings: [
-      {
-        name: 'tier',
-        key: 'tier',
-        type: 'enum',
-        default: 'standard',
-        choices: [
-          { value: 'standard', raw: 'retexture', label: 'Standard', aliases: ['retexture', '2k'], description: '2K textures.' },
-          { value: 'detailed', raw: 'retexture_hd', label: 'Detailed', aliases: ['retexture_hd', 'hd', '4k'], description: '4K textures.' },
-          { value: '8k', raw: 'retexture_8k', label: '8K', aliases: ['retexture_8k', 'extreme'], description: '8K textures.' },
-        ],
-        description: 'The texture tier — each is priced on its own.',
-      },
+      TEXTURE_TIER,
       {
         name: 'prompt',
         key: 'prompt',
@@ -718,27 +796,50 @@ export const NODE_KINDS: Readonly<Record<NodeKind, NodeKindSpec>> = {
         description: 'A reference picture to texture from; it replaces the description.',
       },
       BOOL('removeReferenceBackground', 'Cut the reference picture out of its background first.', true, 'removeBg'),
-      {
-        name: 'alignment',
-        key: 'alignment',
-        type: 'enum',
-        default: 'picture',
-        choices: [
-          { value: 'picture', raw: 'original_image', label: 'Fit texture to picture', aliases: ['original_image', 'image'] },
-          { value: 'mesh', raw: 'geometry', label: 'Fit texture to mesh', aliases: ['geometry'] },
-        ],
-        description: 'When the picture and the mesh disagree, which the texture follows.',
-      },
-      BOOL('bake', 'Bake the result into the textures.', true),
-      BOOL('pbr', 'PBR materials (free on a retexture).', true),
-      BOOL('fast', 'The standard tier’s faster setting.', false),
-      BOOL('delight', 'Strip the reference’s baked-in lighting.', true),
+      ...TEXTURE_FINISH,
     ],
     runInput: {
       kind: 'always',
       description:
         'The editor treats AI texturing as set on each run: a new draft run starts it empty and needs a description or a ' +
         'reference picture before Start. A prompt or reference kept in the recipe is used by runs started without a draft.',
+    },
+  },
+  texture_multiview: {
+    kind: 'texture_multiview',
+    label: 'Multi-view - AI texturing',
+    description:
+      'New textures for the model from pictures of each side, in place of one picture or a description. Wire `views` from a ' +
+      'Multi-view seed or Draw views (the same pictures the model was made from), or leave it unwired and give each run its own set.',
+    group: 'refine',
+    offered: true,
+    legacy: false,
+    threeD: true,
+    engineChoice: false,
+    inputs: [
+      { handle: 'in', label: 'Model', accepts: ['mesh'], required: true },
+      { handle: 'views', label: 'Views', accepts: ['views'], required: false },
+    ],
+    outputs: MESH_OUT,
+    settings: [
+      TEXTURE_TIER,
+      {
+        name: 'views',
+        key: 'referenceViews',
+        type: 'view-set',
+        default: {},
+        description:
+          'The pictures of each side to texture from, the front at least: { front: picture, back?, left?, right? }. ' +
+          'Usually given on each run, not kept in the recipe; pictures wired into `views` win.',
+      },
+      BOOL('removeReferenceBackground', 'Cut each side’s picture out of its background first.', true, 'removeBg'),
+      ...TEXTURE_FINISH,
+    ],
+    runInput: {
+      kind: 'always',
+      description:
+        'Unless `views` is wired, each run gives its own pictures of each side (a front one at least): a new draft run starts ' +
+        'it empty and needs them before Start. A set kept in the recipe is used by runs started without a draft.',
     },
   },
   smart_uv: {
@@ -791,6 +892,7 @@ export const NODE_KINDS: Readonly<Record<NodeKind, NodeKindSpec>> = {
           { value: 'aquatic', label: 'Fish', aliases: ['fish'], description: 'Fins and a tail.' },
           { value: 'hexapod', label: 'Six legs', aliases: ['insect'], description: 'Insects.' },
           { value: 'octopod', label: 'Eight legs', aliases: ['spider'], description: 'Spiders and octopods.' },
+          { value: 'others', label: 'Other creature', aliases: ['other'], description: 'A body none of these describe.' },
         ],
         description: 'The body the skeleton is for.',
       },
@@ -800,10 +902,14 @@ export const NODE_KINDS: Readonly<Record<NodeKind, NodeKindSpec>> = {
         type: 'enum',
         default: 'standard',
         choices: [
-          { value: 'standard', label: 'Standard', description: 'The rigger’s own skeleton naming.' },
+          { value: 'standard', label: 'Standard', description: 'The rigger’s own skeleton, finger bones included.' },
           { value: 'mixamo', label: 'Mixamo', description: 'For Mixamo and libraries that follow it.' },
+          { value: 'unity', label: 'Unity Humanoid', description: 'Maps straight onto a Unity Humanoid avatar.' },
+          { value: 'unreal', label: 'UE5 Mannequin', description: 'Unreal Engine 5’s Mannequin skeleton.' },
+          { value: 'vrm', label: 'VRM 1.0', description: 'For VRM avatars and VTuber tools.' },
+          { value: 'actorcore', label: 'ActorCore', description: 'For ActorCore motion libraries.' },
         ],
-        description: 'The bone naming convention. Any other value is treated as standard.',
+        description: 'The bone naming convention. Applies to a humanoid (rigType biped) only. Any other value is treated as standard.',
       },
       {
         name: 'format',
@@ -854,7 +960,12 @@ export function isNodeKind(value: unknown): value is NodeKind {
 }
 
 export function isSeed(kind: string): boolean {
-  return kind === 'seed_picture' || kind === 'seed_model'
+  return kind === 'seed_picture' || kind === 'seed_model' || kind === 'seed_views'
+}
+
+/** The two multi-view generations: Multi-view - Generate 3D and - Smart 3D. */
+export function isMultiViewGenerate(kind: string): kind is 'generate_3d_multiview' | 'generate_smart_3d_multiview' {
+  return kind === 'generate_3d_multiview' || kind === 'generate_smart_3d_multiview'
 }
 
 /** What an output handle carries, or null for one the node does not have. */

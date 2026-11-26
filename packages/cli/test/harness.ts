@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -21,7 +21,13 @@ export async function zetta(
   let stdout = ''
   let stderr = ''
   const configDir = options.configDir ?? mkdtempSync(join(tmpdir(), 'zetta-test-'))
-  const env = { ...homeEnv(mkdtempSync(join(tmpdir(), 'zetta-home-'))), ZETTA_CONFIG_DIR: configDir, ZETTA_NO_KEYCHAIN: '1', ...options.env }
+  // The developer's own sign-in variables must never reach a test; a test that wants one passes it.
+  const signedOut = { ZETTA_API_KEY: '', ZETTA_TOKEN: '' }
+  const { ZETTA_TEST_SIGN_IN: session, ...given } = options.env ?? {}
+  // ZETTA_TEST_SIGN_IN stands for "signed in with the browser": saved as the profile's sign-in, the
+  // way `zetta auth login` saves it. The CLI itself reads no such variable.
+  if (session) saveSignIn(configDir, session, given.ZETTA_PROFILE || 'default')
+  const env = { ...homeEnv(mkdtempSync(join(tmpdir(), 'zetta-home-'))), ...signedOut, ZETTA_CONFIG_DIR: configDir, ZETTA_NO_KEYCHAIN: '1', ...given }
   const stdin = Object.assign(Readable.from(options.stdin ? [options.stdin] : []), { isTTY: options.tty ?? false })
   const previous = { ...process.env }
   Object.assign(process.env, env)
@@ -60,6 +66,15 @@ export async function zetta(
  */
 export function homeEnv(dir: string): Record<string, string> {
   return { HOME: dir, USERPROFILE: dir, APPDATA: join(dir, 'AppData', 'Roaming'), XDG_CONFIG_HOME: join(dir, '.config') }
+}
+
+/** Saves a session token as a profile's browser sign-in, in the credentials file of `configDir`. */
+export function saveSignIn(configDir: string, token: string, profile = 'default'): void {
+  const file = join(configDir, 'credentials.json')
+  const all = existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>) : {}
+  all[profile] = { token, savedAt: new Date().toISOString(), method: 'web' }
+  mkdirSync(configDir, { recursive: true })
+  writeFileSync(file, JSON.stringify(all), { mode: 0o600 })
 }
 
 export function tokenFor(exp = Math.floor(Date.now() / 1000) + 30 * 86400): string {

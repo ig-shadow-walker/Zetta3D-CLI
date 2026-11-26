@@ -10,6 +10,7 @@ import {
   CONVERT_ORIENTATIONS,
   CONVERT_TEXTURE_FORMATS,
   FBX_PRESETS,
+  HUMANOID_RIG_TYPE,
   MAX_PROMPT_LENGTH,
   MESH_FORMATS,
   N25_FACE_LIMITS,
@@ -18,7 +19,6 @@ import {
   RIG_OUT_FORMATS,
   RIG_SPECS,
   RIG_TYPES,
-  SHARED_FACE_LIMITS,
   buildMetadata,
   checkEnum,
   checkUrl,
@@ -26,6 +26,7 @@ import {
   isWholeNumber,
   priceOf,
   problem,
+  retiredModelMessage,
   type BuildResult,
   type ConvertFormat,
   type ConvertOrientation,
@@ -50,7 +51,8 @@ export type RefineToolId = (typeof REFINE_TOOL_IDS)[number]
 export interface RefineOptionInfo {
   /** The key on `RefineInput`. */
   name: string
-  type: 'enum' | 'boolean' | 'integer' | 'number' | 'string' | 'string[]'
+  /** `views` is a map of side → picture address (front, back, left, right). */
+  type: 'enum' | 'boolean' | 'integer' | 'number' | 'string' | 'string[]' | 'views'
   values?: readonly string[]
   default?: string | number | boolean
   min?: number
@@ -81,13 +83,12 @@ const ALL_FORMATS: readonly MeshFormat[] = ['GLB', 'OBJ', 'FBX']
 
 /** Smart UV refuses a source over this many equivalent triangles. */
 export const SMART_UV_MAX_TRIANGLES = 80_000
-/** Where an R1 retopology's polygon budget starts: under both ceilings. */
+/** Where a retopology's polygon budget starts: under both ceilings. */
 export const DEFAULT_RETOPO_FACES = 8_000
 
-export const RETOPO_ENGINES = ['r1', 'n1'] as const
+/** Zetta R1 is the only retopology engine since Zetta N1 was retired. */
+export const RETOPO_ENGINES = ['r1'] as const
 export type RetopoEngine = (typeof RETOPO_ENGINES)[number]
-export const FACE_LEVELS = ['low', 'medium', 'high'] as const
-export type FaceLevel = (typeof FACE_LEVELS)[number]
 export const SEGMENT_MODES = ['ai', 'smart'] as const
 export type SegmentMode = (typeof SEGMENT_MODES)[number]
 export const SEGMENT_GRANULARITIES = ['simple', 'balanced', 'detailed'] as const
@@ -102,42 +103,31 @@ const TEXTURE_TIER_CODES: Record<TextureTier, string> = {
   '8k': OPERATIONS.RETEXTURE_8K,
 }
 const REFINE_POLYGON_TYPES = ['triangle', 'quad'] as const
+/** The sides AI Texturing takes reference pictures for, in the order the Studio sends them. */
+export const TEXTURE_VIEW_SLOTS = ['front', 'back', 'left', 'right'] as const
+export type TextureViewSlot = (typeof TEXTURE_VIEW_SLOTS)[number]
 
 export const REFINE_TOOLS: Readonly<Record<RefineToolId, RefineToolInfo>> = {
   retopo: {
     id: 'retopo',
     label: 'Retopology',
-    description: 'Rebuilds the mesh with cleaner, more even geometry.',
+    description: 'Rebuilds the mesh with cleaner, more even geometry, on Zetta R1.',
     codes: [OPERATIONS.SMART_TOPOLOGY],
-    accepts: { r1: ALL_FORMATS, n1: ['GLB', 'OBJ'] },
-    maxSourceBytes: { r1: 150 * MB, n1: null },
+    accepts: { any: ALL_FORMATS },
+    maxSourceBytes: { any: 150 * MB },
     options: [
-      {
-        name: 'engine',
-        type: 'enum',
-        values: RETOPO_ENGINES,
-        default: 'r1',
-        description: 'r1: up to 20,000 polygons and less than half the price. n1: no polygon ceiling, for a dense mesh.',
-      },
       {
         name: 'faces',
         type: 'integer',
         min: R1_FACE_LIMITS.triangle.min,
         max: R1_FACE_LIMITS.triangle.max,
         default: DEFAULT_RETOPO_FACES,
-        description: 'The exact polygon budget (10,000 at most with quads).',
-        only: 'engine r1',
-      },
-      {
-        name: 'faceLevel',
-        type: 'enum',
-        values: FACE_LEVELS,
-        default: 'medium',
-        description: 'How much geometry to keep: low is game-ready, high keeps the most detail. On r1, use instead of faces.',
+        description: 'The exact polygon budget: 500–20,000 triangles, or 500–10,000 quads.',
       },
       { name: 'polygonType', type: 'enum', values: REFINE_POLYGON_TYPES, default: 'triangle', description: 'How the rebuilt surface is divided.' },
-      { name: 'bake', type: 'boolean', default: true, description: 'Carry the textures onto the rebuilt mesh. false returns bare geometry.', only: 'engine r1' },
-      { name: 'partNames', type: 'string[]', description: 'Rebuild only these parts of a segmented mesh.', only: 'engine r1' },
+      { name: 'bake', type: 'boolean', default: true, description: 'Carry the textures onto the rebuilt mesh. false returns bare geometry.' },
+      { name: 'unwrapUvs', type: 'boolean', default: false, description: 'Unwrap fresh UVs in the same job, at no extra cost. Replaces the UV layout.' },
+      { name: 'partNames', type: 'string[]', description: 'Rebuild only these parts of a segmented mesh.' },
     ],
   },
   segment: {
@@ -175,8 +165,8 @@ export const REFINE_TOOLS: Readonly<Record<RefineToolId, RefineToolInfo>> = {
     maxSourceBytes: { any: 150 * MB },
     maxSourceTriangles: SMART_UV_MAX_TRIANGLES,
     options: [
-      { name: 'bake', type: 'boolean', default: true, description: 'Re-bake the textures onto the new layout. false returns bare UVs.' },
-      { name: 'exportOrientation', type: 'enum', values: UV_ORIENTATIONS, default: 'as-is', description: 'Which way the model faces in the file.' },
+      { name: 'bake', type: 'boolean', default: false, description: 'Re-bake the textures onto the new layout. Off by default: bare UVs.' },
+      { name: 'exportOrientation', type: 'enum', values: UV_ORIENTATIONS, default: 'as-is', description: 'Which way the model faces in the file: as-is, +x, -x, +y or -y.' },
       { name: 'compressGeometry', type: 'boolean', default: false, description: 'Compress the mesh for a smaller file.' },
     ],
   },
@@ -189,7 +179,13 @@ export const REFINE_TOOLS: Readonly<Record<RefineToolId, RefineToolInfo>> = {
     maxSourceBytes: { any: 150 * MB },
     options: [
       { name: 'tier', type: 'enum', values: TEXTURE_TIERS, default: 'standard', description: 'Texture resolution: standard is 2K, hd 4K, 8k 8K. Each tier has its own price.' },
-      { name: 'imageUrl', type: 'string', required: true, description: 'The reference picture to paint from.' },
+      { name: 'imageUrl', type: 'string', description: 'The reference picture to paint from. Required unless views are given.' },
+      {
+        name: 'views',
+        type: 'views',
+        values: TEXTURE_VIEW_SLOTS,
+        description: 'Reference pictures of several sides instead of imageUrl: front (required), back, left, right.',
+      },
       {
         name: 'textureAlignment',
         type: 'enum',
@@ -213,8 +209,21 @@ export const REFINE_TOOLS: Readonly<Record<RefineToolId, RefineToolInfo>> = {
     accepts: { any: ALL_FORMATS },
     maxSourceBytes: { any: 150 * MB },
     options: [
-      { name: 'rigType', type: 'enum', values: RIG_TYPES, default: 'biped', description: 'The body: biped (humanoid), quadruped, hexapod, octopod, avian, serpentine or aquatic.' },
-      { name: 'rigSpec', type: 'enum', values: RIG_SPECS, default: 'standard', description: 'Bone naming: standard, or mixamo for libraries that follow it.' },
+      {
+        name: 'rigType',
+        type: 'enum',
+        values: RIG_TYPES,
+        default: 'biped',
+        description: 'The body: biped (humanoid), quadruped, hexapod, octopod, avian, serpentine, aquatic, or others for a creature none of these describe.',
+      },
+      {
+        name: 'rigSpec',
+        type: 'enum',
+        values: RIG_SPECS,
+        default: 'standard',
+        description: 'Skeleton naming for a humanoid: standard (the rigger’s own, finger bones included), mixamo, unity (Humanoid), unreal (UE5 Mannequin), vrm (VRM 1.0) or actorcore.',
+        only: 'rigType biped',
+      },
       { name: 'rigOutFormat', type: 'enum', values: RIG_OUT_FORMATS, default: 'glb', description: 'What the rigged mesh comes back as.' },
     ],
   },
@@ -232,9 +241,9 @@ export const REFINE_TOOLS: Readonly<Record<RefineToolId, RefineToolInfo>> = {
       {
         name: 'faceLimit',
         type: 'integer',
-        min: SHARED_FACE_LIMITS.min,
-        max: SHARED_FACE_LIMITS.max,
-        description: 'A polygon limit (1,000–150,000 with quads). Advanced tier.',
+        min: N25_FACE_LIMITS.high.triangle.min,
+        max: N25_FACE_LIMITS.high.triangle.max,
+        description: 'A polygon limit: 1,000–1,000,000, or 1,000–150,000 with quads. Advanced tier.',
       },
       { name: 'flattenBottom', type: 'boolean', default: false, description: 'Cut a flat base so the model stands level. Advanced tier.' },
       { name: 'flattenBottomThreshold', type: 'number', min: 0, max: 1, default: 0.01, description: 'How deep the flattening cuts, as a fraction of the model.', only: 'flattenBottom' },
@@ -268,11 +277,12 @@ export interface RefineSourceInput extends RequestMetadata {
 }
 
 export interface RetopoOptions {
+  /** Always r1; any other engine is refused. */
   engine?: RetopoEngine
   faces?: number
-  faceLevel?: FaceLevel
   polygonType?: 'triangle' | 'quad'
   bake?: boolean
+  unwrapUvs?: boolean
   partNames?: string[]
 }
 export interface SegmentOptions {
@@ -289,8 +299,8 @@ export interface UvOptions {
 export interface TextureOptions {
   tier?: TextureTier
   imageUrl?: string
-  /** Not accepted by the server yet; see `buildRefineRequest`. */
-  views?: Partial<Record<'front' | 'back' | 'left' | 'right', string>>
+  /** Reference pictures by side, instead of `imageUrl`. The front is required. */
+  views?: Partial<Record<TextureViewSlot, string>>
   textureAlignment?: 'original_image' | 'geometry'
   enablePBR?: boolean
   bake?: boolean
@@ -337,6 +347,17 @@ export type RefineInput<T extends RefineToolId = RefineToolId> = RefineSourceInp
 const SOURCE_KEYS = ['sourcePostId', 'sourceFileUrl', 'sourceFormat', 'sourceBytes', 'sourceTriangles']
 const METADATA_KEYS = ['title', 'tags', 'availability', 'origin']
 
+/** Options a tool once had and no longer does, with what to do instead. */
+const RETIRED_OPTIONS: Partial<Record<RefineToolId, Record<string, string>>> = {
+  retopo: {
+    faceLevel: 'faceLevel was the retired Zetta N1’s control. Set faces (500–20,000 triangles, 500–10,000 quads) instead.',
+  },
+}
+/** Keys a tool still reads although they are not listed as options. */
+const EXTRA_KEYS: Partial<Record<RefineToolId, readonly string[]>> = {
+  retopo: ['engine'],
+}
+
 // --------------------------------------------------------------------------------- the rules
 
 /** Which billed code a tool's settings resolve to. */
@@ -375,7 +396,6 @@ export function convertTier(options: ConvertOptions): string {
 
 /** The engine or mode a tool's formats and size limit depend on. */
 function variantOf(tool: RefineToolId, options: Record<string, unknown>): string {
-  if (tool === 'retopo') return options.engine === 'n1' ? 'n1' : 'r1'
   if (tool === 'segment') return options.mode === 'smart' ? 'smart' : 'ai'
   return 'any'
 }
@@ -418,8 +438,8 @@ export function costOf(
   sourceFormats: MeshFormat | readonly MeshFormat[] = [],
 ): number | null {
   const code = refineOperation(tool, options)
-  // Retopology is priced per engine.
-  const model = tool === 'retopo' ? variantOf(tool, options) : undefined
+  // Retopology is priced per engine, and runs on Zetta R1.
+  const model = tool === 'retopo' ? 'r1' : undefined
   const base = priceOf(prices, code, model)
   if (base === null) return null
   if (!needsConversion(tool, sourceFormats, options)) return base
@@ -448,7 +468,6 @@ const OPERATION_LABELS: Record<string, string> = {
 
 function labelFor(tool: RefineToolId, options: Record<string, unknown>): string {
   if (tool === 'segment') return OPERATION_LABELS[variantOf(tool, options)] ?? 'Segmentation'
-  if (tool === 'retopo') return `Retopology on Zetta ${variantOf(tool, options) === 'n1' ? 'N1' : 'R1'}`
   return OPERATION_LABELS[tool] ?? REFINE_TOOLS[tool].label
 }
 
@@ -587,41 +606,33 @@ interface ToolBuild {
 
 function buildRetopo(opts: RetopoOptions, problems: Problem[]): ToolBuild {
   const fields: Fields = {}
-  const engine: RetopoEngine = opts.engine ?? 'r1'
-  if (opts.engine !== undefined) checkEnum(problems, 'engine', opts.engine, RETOPO_ENGINES)
+  if (opts.engine !== undefined && (opts.engine as string) !== 'r1') {
+    const retired = retiredModelMessage(opts.engine)
+    problems.push(
+      retired
+        ? problem('ENGINE_RETIRED', `${retired.split('.')[0]}. Retopology runs on Zetta R1.`, 'engine')
+        : problem('INVALID_OPTION', 'engine must be r1: retopology runs on Zetta R1.', 'engine'),
+    )
+  }
   const polygonType = opts.polygonType ?? 'triangle'
   if (opts.polygonType !== undefined) checkEnum(problems, 'polygonType', opts.polygonType, REFINE_POLYGON_TYPES)
   const quad = polygonType === 'quad'
 
-  fields.model = engine
-  if (engine === 'n1') {
-    // N1 takes a level and nothing else; a count, bake or part list would be refused or dropped.
-    onlyFor(problems, 'faces', opts.faces, 'engine r1')
-    onlyFor(problems, 'bake', opts.bake, 'engine r1')
-    onlyFor(problems, 'partNames', opts.partNames, 'engine r1')
-    const level = opts.faceLevel ?? 'medium'
-    if (checkEnum(problems, 'faceLevel', level, FACE_LEVELS)) fields.faceLevel = level
-  } else if (opts.faceLevel !== undefined && opts.faces !== undefined) {
-    problems.push(problem('FACES_AND_LEVEL', 'Give faces or faceLevel, not both.', 'faceLevel'))
-  } else if (opts.faceLevel !== undefined) {
-    // R1 resolves a level to a count itself.
-    if (checkEnum(problems, 'faceLevel', opts.faceLevel, FACE_LEVELS)) fields.faceLevel = opts.faceLevel
-  } else {
-    const faces = opts.faces ?? DEFAULT_RETOPO_FACES
-    if (checkInteger(problems, 'faces', faces, quad ? R1_FACE_LIMITS.quad : R1_FACE_LIMITS.triangle)) {
-      fields.faceCount = faces
-    }
+  fields.model = 'r1'
+  // The Studio always sends the count; 8,000 sits under both ceilings.
+  const faces = opts.faces ?? DEFAULT_RETOPO_FACES
+  if (checkInteger(problems, 'faces', faces, quad ? R1_FACE_LIMITS.quad : R1_FACE_LIMITS.triangle)) {
+    fields.faceCount = faces
   }
   fields.polygonType = quad ? 'quadrilateral' : 'triangle'
-  if (engine === 'r1') {
-    // Baking is on unless turned off, so only `false` travels.
-    if (opts.bake === false) fields.bake = false
-    if (opts.partNames !== undefined) {
-      const names = checkNames(problems, 'partNames', opts.partNames)
-      if (names) fields.partNames = names
-    }
+  // Baking is on unless turned off, so only `false` travels; unwrapping is off unless asked.
+  if (opts.bake === false) fields.bake = false
+  if (opts.unwrapUvs === true) fields.unwrapUvs = true
+  if (opts.partNames !== undefined) {
+    const names = checkNames(problems, 'partNames', opts.partNames)
+    if (names) fields.partNames = names
   }
-  return { code: OPERATIONS.SMART_TOPOLOGY, fields, model: engine }
+  return { code: OPERATIONS.SMART_TOPOLOGY, fields, model: 'r1' }
 }
 
 function buildSegment(opts: SegmentOptions, problems: Problem[]): ToolBuild {
@@ -648,7 +659,8 @@ function buildSegment(opts: SegmentOptions, problems: Problem[]): ToolBuild {
 
 function buildUv(opts: UvOptions, problems: Problem[]): ToolBuild {
   const fields: Fields = {}
-  if (opts.bake === false) fields.bake = false
+  // Off by default in the Studio, while the server's own default is on: so `false` travels unless asked.
+  if (opts.bake !== true) fields.bake = false
   const orientation = opts.exportOrientation ?? 'as-is'
   if (checkEnum(problems, 'exportOrientation', orientation, UV_ORIENTATIONS) && orientation !== 'as-is') {
     fields.exportOrientation = orientation
@@ -662,19 +674,36 @@ function buildTexture(opts: TextureOptions, problems: Problem[], warnings: strin
   const tier: TextureTier = opts.tier ?? 'standard'
   if (opts.tier !== undefined) checkEnum(problems, 'tier', opts.tier, TEXTURE_TIERS)
   const imageUrl = opts.imageUrl?.trim() ?? ''
-  const hasViews = Object.values(opts.views ?? {}).some((url) => typeof url === 'string' && url.trim() !== '')
+  const viewEntries = Object.entries(opts.views ?? {}).filter(
+    (entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].trim() !== '',
+  )
 
-  if (hasViews) {
-    // The Studio sends views here, but the server refuses views without a paid `multi_view`
-    // modifier, which a refine job cannot carry. The server wins.
-    problems.push(
-      problem('TEXTURE_VIEWS_NOT_ACCEPTED', 'The server does not take reference views on a retexture yet. Send one imageUrl instead.', 'views'),
-    )
-  }
-  if (imageUrl === '') {
-    if (!hasViews) {
-      problems.push(problem('REFERENCE_REQUIRED', 'AI Texturing paints from a reference picture. Give imageUrl.', 'imageUrl'))
+  if (viewEntries.length > 0) {
+    // One reference or several views, never both: the engine takes exactly one of them.
+    if (imageUrl !== '') {
+      problems.push(
+        problem('IMAGE_WITH_VIEWS', 'Send views or imageUrl, not both. Put the main picture in views.front.', 'imageUrl'),
+      )
     }
+    const bySlot = new Map<TextureViewSlot, string>()
+    for (const [slot, raw] of viewEntries) {
+      if (!(TEXTURE_VIEW_SLOTS as readonly string[]).includes(slot)) {
+        problems.push(
+          problem('VIEW_NOT_SUPPORTED', `AI Texturing takes ${TEXTURE_VIEW_SLOTS.join(', ')} views, not ${slot}.`, `views.${slot}`),
+        )
+        continue
+      }
+      bySlot.set(slot as TextureViewSlot, checkUrl(problems, `views.${slot}`, raw, `The ${slot} view address`))
+    }
+    if (!bySlot.has('front')) {
+      problems.push(problem('FRONT_VIEW_REQUIRED', 'Texturing from several views needs the front view.', 'views.front'))
+    }
+    fields.multiViewImages = TEXTURE_VIEW_SLOTS.filter((slot) => bySlot.has(slot)).map((slot) => ({
+      viewType: slot,
+      imageUrl: bySlot.get(slot) as string,
+    }))
+  } else if (imageUrl === '') {
+    problems.push(problem('REFERENCE_REQUIRED', 'AI Texturing paints from a reference picture. Give imageUrl, or views.', 'imageUrl'))
   } else {
     fields.imageUrl = checkUrl(problems, 'imageUrl', imageUrl, 'The reference picture address')
   }
@@ -703,11 +732,20 @@ function buildTexture(opts: TextureOptions, problems: Problem[], warnings: strin
 function buildRig(opts: RigOptions, problems: Problem[]): ToolBuild {
   const fields: Fields = {}
   // Each has a default at the server, so only a different choice travels.
-  if (opts.rigType !== undefined && checkEnum(problems, 'rigType', opts.rigType, RIG_TYPES) && opts.rigType !== 'biped') {
-    fields.rigType = opts.rigType
+  let rigType: RigType = HUMANOID_RIG_TYPE
+  if (opts.rigType !== undefined && checkEnum(problems, 'rigType', opts.rigType, RIG_TYPES)) {
+    rigType = opts.rigType
+    if (rigType !== HUMANOID_RIG_TYPE) fields.rigType = rigType
   }
   if (opts.rigSpec !== undefined && checkEnum(problems, 'rigSpec', opts.rigSpec, RIG_SPECS) && opts.rigSpec !== 'standard') {
-    fields.rigSpec = opts.rigSpec
+    // A naming applies to a humanoid only; the server would drop it on any other body.
+    if (rigType !== HUMANOID_RIG_TYPE) {
+      problems.push(
+        problem('RIG_SPEC_NEEDS_BIPED', `rigSpec ${opts.rigSpec} names a humanoid skeleton. Use it with rigType biped, or leave it out.`, 'rigSpec'),
+      )
+    } else {
+      fields.rigSpec = opts.rigSpec
+    }
   }
   if (
     opts.rigOutFormat !== undefined &&
@@ -757,7 +795,8 @@ function buildConvert(opts: ConvertOptions, problems: Problem[]): ToolBuild {
     model = 'n25'
   }
   if (opts.faceLimit !== undefined) {
-    const range = quad ? N25_FACE_LIMITS.high.quad : SHARED_FACE_LIMITS
+    // A conversion is bounded as the default engine's High rung is.
+    const range = quad ? N25_FACE_LIMITS.high.quad : N25_FACE_LIMITS.high.triangle
     if (checkInteger(problems, 'faceLimit', opts.faceLimit, range)) fields.faceCount = opts.faceLimit
   }
   if (opts.forceSymmetry !== undefined) fields.forceSymmetry = opts.forceSymmetry
@@ -792,9 +831,10 @@ function buildConvert(opts: ConvertOptions, problems: Problem[]): ToolBuild {
 /** The wire order the Studio uses, so bodies read the same in logs. */
 const FIELD_ORDER: ReadonlyArray<keyof CreateGenerationRequest> = [
   'imageUrl',
+  'multiViewImages',
   'prompt',
   'model',
-  'faceLevel',
+  'unwrapUvs',
   'faceCount',
   'segmentGranularity',
   'splitByConnectivity',
@@ -846,12 +886,14 @@ export function buildRefineRequest<T extends RefineToolId>(
     ...SOURCE_KEYS,
     ...METADATA_KEYS,
     ...REFINE_TOOLS[tool].options.map((option) => option.name),
-    ...(tool === 'texture' ? ['views'] : []),
+    ...(EXTRA_KEYS[tool] ?? []),
   ])
+  const retired: Record<string, string> = RETIRED_OPTIONS[tool] ?? {}
   for (const [key, value] of Object.entries(options)) {
-    if (value !== undefined && !known.has(key)) {
-      problems.push(problem('UNKNOWN_OPTION', `${key} is not an option of refine ${tool}.`, key))
-    }
+    if (value === undefined || known.has(key)) continue
+    const instead = retired[key]
+    if (instead) problems.push(problem('OPTION_RETIRED', instead, key))
+    else problems.push(problem('UNKNOWN_OPTION', `${key} is not an option of refine ${tool}.`, key))
   }
 
   const source = checkSource(tool, input, options, problems)

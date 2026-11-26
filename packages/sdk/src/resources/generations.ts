@@ -69,8 +69,12 @@ export class Generations {
     return this.transport.request('GET', `/3d/generations/${id}/download`, { query: { key } })
   }
 
-  /** A pre-signed upload that replaces one of this item's own result files. */
-  resultUpload(id: number, input: { part?: string; format?: 'glb' | 'fbx' } = {}): Promise<ResultUploadTicket> {
+  /**
+   * A ticket to overwrite one of this item's own result files: its GLB, part `part` of a
+   * segmentation (counting from 0), or its one FBX with `format: 'fbx'`. Send the bytes with
+   * `uploads.send`, or use `uploads.replaceResult`, which does both.
+   */
+  resultUpload(id: number, input: { part?: number; format?: 'glb' | 'fbx' } = {}): Promise<ResultUploadTicket> {
     return this.transport.request('POST', `/3d/generations/${id}/result-upload`, { body: input, retry: 'never' })
   }
 
@@ -137,6 +141,18 @@ export function assertSucceeded(generation: Generation): Generation {
       : `#${generation.id} failed. Its credits were refunded.`,
     details: { id: generation.id, status: generation.status },
   })
+}
+
+/** Features whose result is one GLB per part (`part` in `resultUpload` counts these). */
+export const SEGMENTED_FEATURES: readonly string[] = ['segmentation', 'smartSegmentation']
+
+/**
+ * A segmented item's GLB parts in part order — the order `resultUpload`'s `part` counts in (the
+ * server sorts parts by the number at the end of their file name, `…-3.glb`).
+ */
+export function resultParts(generation: Pick<Generation, 'result'>): ResultFile[] {
+  const number = (key: string) => Number(/-(\d+)\.glb$/i.exec(key)?.[1] ?? -1)
+  return (generation.result?.files ?? []).filter((file) => fileFormat(file) === 'glb').sort((a, b) => number(a.key) - number(b.key))
 }
 
 const FORMAT_ORDER = ['glb', 'fbx', 'gltf', 'obj', 'zip', 'usdz', 'stl', '3mf', 'ply', 'spz', 'splat']

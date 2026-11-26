@@ -18,12 +18,12 @@ function dist(version: string, keys: string[]) {
   }
   writeFileSync(join(versionDir, 'SHA256SUMS'), '')
   writeFileSync(join(root, 'latest.json'), '{}')
-  return { version, versionDir, latestJson: join(root, 'latest.json'), installDir: join(root, 'install'), releaseKeys: RELEASE_KEYS }
+  return { version, versionDir, latestJson: join(root, 'latest.json'), installDir: join(import.meta.dirname, '..', '..', '..', 'install'), releaseKeys: RELEASE_KEYS }
 }
 
 describe('bun run build --upload', () => {
   it('puts each build in its OS folder under zcli/', () => {
-    expect(['darwin-arm64', 'darwin-x64-baseline', 'windows-x64', 'linux-x64', 'linux-arm64-musl'].map(storageKey)).toEqual([
+    expect(['darwin-arm64', 'darwin-x64-baseline', 'windows-x64', 'linux-x64', 'linux-arm64-musl'].map((key) => storageKey(key))).toEqual([
       'zcli/macosx/zetta-darwin-arm64',
       'zcli/macosx/zetta-darwin-x64-baseline',
       'zcli/windows/zetta-windows-x64.exe',
@@ -33,9 +33,9 @@ describe('bun run build --upload', () => {
   })
 
   it('reads the backend’s SPACES_* settings, with the bucket in the hostname', () => {
-    const env = { SPACES_KEY: 'k', SPACES_SECRET: 's', SPACES_BUCKET: 'zetta-prod', SPACES_ENDPOINT: 'https://sfo3.digitaloceanspaces.com' }
-    expect(spacesConfig(env)).toMatchObject({ bucket: 'zetta-prod', endpoint: 'https://zetta-prod.sfo3.digitaloceanspaces.com', region: 'us-east-1', virtualHostedStyle: true, publicBase: 'https://zetta-prod.sfo3.digitaloceanspaces.com' })
-    expect(spacesConfig({ ...env, SPACES_ENDPOINT: 'zetta-prod.sfo3.digitaloceanspaces.com' }).endpoint).toBe('https://zetta-prod.sfo3.digitaloceanspaces.com')
+    const env = { SPACES_KEY: 'k', SPACES_SECRET: 's', SPACES_BUCKET: 'my-bucket', SPACES_ENDPOINT: 'https://sfo3.digitaloceanspaces.com' }
+    expect(spacesConfig(env)).toMatchObject({ bucket: 'my-bucket', endpoint: 'https://my-bucket.sfo3.digitaloceanspaces.com', region: 'us-east-1', virtualHostedStyle: true, publicBase: 'https://my-bucket.sfo3.digitaloceanspaces.com' })
+    expect(spacesConfig({ ...env, SPACES_ENDPOINT: 'my-bucket.sfo3.digitaloceanspaces.com' }).endpoint).toBe('https://my-bucket.sfo3.digitaloceanspaces.com')
     expect(spacesConfig({ ...env, SPACES_REGION: 'sfo3', SPACES_CDN_ENDPOINT: 'https://cdn.example.com/' })).toMatchObject({ region: 'sfo3', publicBase: 'https://cdn.example.com' })
   })
 

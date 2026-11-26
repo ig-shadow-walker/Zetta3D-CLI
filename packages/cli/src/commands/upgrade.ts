@@ -1,12 +1,14 @@
 import { z } from 'zod'
 import { defineCommand } from '../core/define'
-import { compareVersions, fetchLatest, isCompiledBinary, upgradeSelf } from '../upgrade'
+import { compareVersions, fetchLatest, isCompiledBinary, upgradeCommand as upgradeWith, upgradeSelf } from '../upgrade'
+import { rememberLatest } from '../update-notice'
 import { VERSION } from '../version'
 
 export const upgradeCommand = defineCommand({
   path: ['upgrade'],
   summary: 'Update zetta to the latest release (or a given version).',
-  description: 'Downloads the binary for this machine, checks its SHA-256 and replaces this one. Use --check to only look.',
+  description:
+    'Downloads the binary for this machine, checks its SHA-256 and replaces this one; the agent skill updates itself on the next run. Use --check to only look. A copy installed with Homebrew or npm is upgraded with that tool instead (the check says which command).',
   kind: 'local',
   mcp: false,
   input: z.object({
@@ -18,7 +20,8 @@ export const upgradeCommand = defineCommand({
     if (input.check) {
       const latest = await fetchLatest()
       const newer = compareVersions(latest.version, VERSION) > 0
-      return { current: VERSION, latest: latest.version, updateAvailable: newer }
+      rememberLatest(ctx.env, latest.version)
+      return { current: VERSION, latest: latest.version, updateAvailable: newer, ...(newer ? { upgradeWith: upgradeWith() } : {}) }
     }
     if (!isCompiledBinary()) {
       return { current: VERSION, upgraded: false, note: 'Running from source; update with git pull (or reinstall: curl -fsSL https://zetta3d.ai/install.sh | sh).' }
@@ -30,9 +33,9 @@ export const upgradeCommand = defineCommand({
     })
     return result
   },
-  text: (r: { current?: string; latest?: string; updateAvailable?: boolean; upgraded?: boolean; from?: string; to?: string; note?: string }) => {
+  text: (r: { current?: string; latest?: string; updateAvailable?: boolean; upgradeWith?: string; upgraded?: boolean; from?: string; to?: string; note?: string }) => {
     if (r.note) return r.note
-    if (r.latest !== undefined) return r.updateAvailable ? `Update available: ${r.current} → ${r.latest}. Run \`zetta upgrade\`.` : `Up to date (${r.current}).`
+    if (r.latest !== undefined) return r.updateAvailable ? `Update available: ${r.current} → ${r.latest}. Run \`${r.upgradeWith ?? 'zetta upgrade'}\`.` : `Up to date (${r.current}).`
     return r.upgraded ? `Updated ${r.from} → ${r.to}.` : `Already on ${r.to}.`
   },
 })

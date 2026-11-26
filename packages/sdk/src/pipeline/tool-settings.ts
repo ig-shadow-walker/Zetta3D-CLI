@@ -26,8 +26,13 @@ export const RETOPOLOGY_BOUNDS = {
 
 export const DEFAULT_RETOPOLOGY_FACES = 8_000
 
-/** The rig conventions (bone naming) the Studio offers. Anything else is treated as `standard`. */
-export const RIG_SPEC_VALUES = ['standard', 'mixamo'] as const
+/**
+ * The rig conventions (bone naming) the Studio offers. Anything else is treated as `standard`. A
+ * convention applies to a humanoid (`biped`) only; it is never sent for any other body.
+ */
+export const RIG_SPEC_VALUES = ['standard', 'mixamo', 'unity', 'unreal', 'vrm', 'actorcore'] as const
+/** The one body a bone naming applies to. */
+export const HUMANOID_RIG_TYPE = 'biped'
 export const DEFAULT_RIG_TYPE = 'biped'
 export const DEFAULT_RIG_SPEC = 'standard'
 export const DEFAULT_RIG_OUT_FORMAT = 'glb'
@@ -36,12 +41,19 @@ export function isKnownRigSpec(value: unknown): boolean {
   return typeof value === 'string' && (RIG_SPEC_VALUES as readonly string[]).includes(value)
 }
 
+/**
+ * Zetta R1 is the only retopology engine since Zetta N1 was retired: a step still naming `n1` runs on
+ * R1 on the server. `faceLevel` was N1's control; an older recipe may hold it, but it is never sent.
+ */
+export const RETIRED_RETOPOLOGY_ENGINES = ['n1'] as const
+
 export const DEFAULT_RETOPOLOGY_SETTINGS = {
   engine: 'r1',
   faceLevel: 'medium',
   polygonType: 'triangle',
   faces: DEFAULT_RETOPOLOGY_FACES,
   bake: true,
+  unwrapUvs: false,
 } as const
 
 export const DEFAULT_SEGMENT_SETTINGS = {
@@ -109,6 +121,7 @@ export interface PostProcessInput {
   compressGeometry?: boolean
   textureAlignment?: string
   bake?: boolean
+  unwrapUvs?: boolean
   enablePBR?: boolean
   textureFast?: boolean
   delight?: boolean
@@ -124,6 +137,7 @@ export function postProcessBody(input: PostProcessInput): Record<string, unknown
     ...(prompt ? { prompt } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.faceLevel ? { faceLevel: input.faceLevel } : {}),
+    ...(input.unwrapUvs ? { unwrapUvs: true } : {}),
     ...(typeof input.faceCount === 'number' ? { faceCount: input.faceCount } : {}),
     ...(input.segmentGranularity ? { segmentGranularity: input.segmentGranularity } : {}),
     ...(input.splitByConnectivity === false ? { splitByConnectivity: false } : {}),
@@ -156,17 +170,15 @@ export function retopologyOutOfRange(value: Settings): boolean {
   )
 }
 
+/** Zetta R1 takes an exact count — never a level, which the server refuses on it — and may unwrap UVs too. */
 export function retopologyRequest(value: Settings): PostProcessInput {
   return {
     code: SMART_TOPOLOGY,
     model: str(value.engine),
     polygonType: str(value.polygonType),
-    ...(value.engine === 'r1'
-      ? {
-          ...(typeof value.faces === 'number' ? { faceCount: value.faces } : {}),
-          ...(typeof value.bake === 'boolean' ? { bake: value.bake } : {}),
-        }
-      : { faceLevel: str(value.faceLevel) }),
+    ...(typeof value.faces === 'number' ? { faceCount: value.faces } : {}),
+    ...(typeof value.bake === 'boolean' ? { bake: value.bake } : {}),
+    ...(value.unwrapUvs === true ? { unwrapUvs: true } : {}),
   }
 }
 
@@ -209,12 +221,17 @@ export function smartUvRequest(value: Settings): PostProcessInput {
   }
 }
 
-/** Each choice is sent only when it is not the default; a bone naming the Studio does not offer is never sent. */
+/**
+ * Each choice is sent only when it is not the default; a bone naming is sent for a humanoid only, and
+ * one the Studio does not offer never.
+ */
 export function autoRigRequest(value: Settings): PostProcessInput {
   return {
     code: AUTO_RIGGING,
     ...(value.rigType !== DEFAULT_RIG_TYPE ? { rigType: str(value.rigType) } : {}),
-    ...(value.spec !== DEFAULT_RIG_SPEC && isKnownRigSpec(value.spec) ? { rigSpec: str(value.spec) } : {}),
+    ...(value.rigType === HUMANOID_RIG_TYPE && value.spec !== DEFAULT_RIG_SPEC && isKnownRigSpec(value.spec)
+      ? { rigSpec: str(value.spec) }
+      : {}),
     ...(value.outFormat !== DEFAULT_RIG_OUT_FORMAT ? { rigOutFormat: str(value.outFormat) } : {}),
   }
 }

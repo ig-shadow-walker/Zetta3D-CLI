@@ -46,6 +46,7 @@ const USAGE = `Usage: bun run scripts/build-binaries.ts [options]
   --target <bun-tgt>   build this Bun target instead (repeatable)
   --entry <file>       CLI entry point (default: packages/cli/src/main.ts)
   --outdir <dir>       output folder (default: dist)
+  --download-base <u>  where installed copies look for new versions (baked into the binaries)
   --rehash             only recompute SHA256SUMS and latest.json for --version
   --skip-smoke         do not run the host binary with --version after building`
 
@@ -158,7 +159,7 @@ function windowsMetadata(version: string): string[] {
   ]
 }
 
-function build(entry: string, target: string, outfile: string, version: string): void {
+function build(entry: string, target: string, outfile: string, version: string, downloadBase?: string): void {
   const key = keyForTarget(target)
   const args = [
     'build',
@@ -175,6 +176,7 @@ function build(entry: string, target: string, outfile: string, version: string):
     `__ZETTA_VERSION__=${JSON.stringify(version)}`,
     '--define',
     `__ZETTA_TARGET__=${JSON.stringify(key)}`,
+    ...(downloadBase ? ['--define', `__ZETTA_DOWNLOAD_BASE__=${JSON.stringify(downloadBase)}`] : []),
     // A compiled CLI must not pick up .env or bunfig.toml (which can preload code) from whatever
     // directory the user runs it in.
     '--no-compile-autoload-dotenv',
@@ -187,7 +189,7 @@ function build(entry: string, target: string, outfile: string, version: string):
 }
 
 /** The minified bundle the binaries embed, as plain JavaScript, for scanning. */
-function buildBundle(entry: string, outfile: string, version: string): void {
+function buildBundle(entry: string, outfile: string, version: string, downloadBase?: string): void {
   const r = run(
     process.execPath,
     [
@@ -199,6 +201,7 @@ function buildBundle(entry: string, outfile: string, version: string): void {
       `--outfile=${outfile}`,
       '--define',
       `__ZETTA_VERSION__=${JSON.stringify(version)}`,
+      ...(downloadBase ? ['--define', `__ZETTA_DOWNLOAD_BASE__=${JSON.stringify(downloadBase)}`] : []),
     ],
     { quiet: true },
   )
@@ -237,6 +240,7 @@ async function main(): Promise<void> {
       target: { type: 'string', multiple: true },
       entry: { type: 'string', default: 'packages/cli/src/main.ts' },
       outdir: { type: 'string', default: 'dist' },
+      'download-base': { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
     strict: true,
@@ -280,7 +284,7 @@ async function main(): Promise<void> {
     const key = keyForTarget(target)
     const outfile = join(versionDir, binaryName(key))
     const started = Date.now()
-    build(entry, target, outfile, version)
+    build(entry, target, outfile, version, values['download-base'])
     console.log(`  ${key.padEnd(26)} ${mb(statSync(outfile).size).padStart(9)}  ${((Date.now() - started) / 1000).toFixed(1)}s`)
     if (key === hostKey && !values['skip-smoke']) smokeTest(outfile, version)
   }
@@ -295,7 +299,7 @@ async function main(): Promise<void> {
   rmSync(bundleDir, { recursive: true, force: true })
   mkdirSync(bundleDir, { recursive: true })
   const bundle = join(bundleDir, 'zetta.js')
-  buildBundle(entry, bundle, version)
+  buildBundle(entry, bundle, version, values['download-base'])
   console.log(`  ${'bundle (scan only)'.padEnd(26)} ${mb(statSync(bundle).size).padStart(9)}  ${display(bundle)}`)
 
   const manifest = await writeManifest(outdir, version)

@@ -22,7 +22,35 @@ export type { LatestManifest, ManifestFile } from './manifest'
 export { compareVersions, DEFAULT_DOWNLOAD_BASE, downloadBase } from './manifest'
 export { platformKey } from './platform'
 
-const INSTALL_HINT = 'curl -fsSL https://zetta3d.ai/install.sh | sh   (Windows: irm https://zetta3d.ai/install.ps1 | iex)'
+/** How to (re)install from where this build's releases live. */
+function installHint(): string {
+  const base = downloadBase()
+  return `curl -fsSL ${base}/install.sh | sh   (Windows: irm ${base}/install.ps1 | iex)`
+}
+
+export type InstallMethod = 'binary' | 'homebrew' | 'npm' | 'source'
+
+/** How this copy of zetta was installed, which decides how it is upgraded. */
+export function installMethod(execPath: string = process.execPath): InstallMethod {
+  if (!isCompiledBinary(execPath)) return 'source'
+  let real = execPath
+  try {
+    real = realpathSync(execPath)
+  } catch {
+    // Not resolvable: judge by the path as given.
+  }
+  if (/[\\/]Cellar[\\/]/.test(real)) return 'homebrew'
+  if (/[\\/]node_modules[\\/]@zetta3d[\\/]/.test(real)) return 'npm'
+  return 'binary'
+}
+
+/** The command that upgrades this copy. */
+export function upgradeCommand(method: InstallMethod = installMethod()): string {
+  if (method === 'homebrew') return 'brew upgrade zetta'
+  if (method === 'npm') return 'npm install -g @zetta3d/cli@latest'
+  if (method === 'source') return 'git pull'
+  return 'zetta upgrade'
+}
 
 function errMessage(err: unknown): string {
   if (err instanceof Error) {
@@ -204,7 +232,7 @@ function permissionHint(err: unknown, path: string): Error {
   const code = (err as { code?: string }).code
   if (code === 'EACCES' || code === 'EPERM' || code === 'EROFS') {
     return new Error(
-      `Cannot replace ${path}: permission denied. Fix the permissions of ${dirname(path)}, or reinstall with: ${INSTALL_HINT}`,
+      `Cannot replace ${path}: permission denied. Fix the permissions of ${dirname(path)}, or reinstall with: ${installHint()}`,
     )
   }
   return err instanceof Error ? err : new Error(String(err))
@@ -268,8 +296,13 @@ export async function upgradeSelf(opts: UpgradeOptions = {}): Promise<UpgradeRes
     const runner = (execPath.split(/[\\/]/).pop() ?? 'bun').replace(/\.exe$/i, '')
     throw new Error(
       `zetta upgrade only works on an installed zetta binary, but this zetta is running from source under ${runner}. ` +
-        `Update the sources with git instead, or install the binary with: ${INSTALL_HINT}`,
+        `Update the sources with git instead, or install the binary with: ${installHint()}`,
     )
+  }
+  const method = opts.execPath ? 'binary' : installMethod(execPath)
+  if (method === 'homebrew' || method === 'npm') {
+    // Replacing a file the package manager owns would leave it confused about what is installed.
+    throw new Error(`This zetta was installed with ${method === 'homebrew' ? 'Homebrew' : 'npm'}; upgrade it with: ${upgradeCommand(method)}`)
   }
   const progress = opts.onProgress ?? (() => {})
   const fetchImpl = opts.fetchImpl ?? fetch
@@ -281,7 +314,7 @@ export async function upgradeSelf(opts: UpgradeOptions = {}): Promise<UpgradeRes
   try {
     target = realpathSync(execPath)
   } catch {
-    throw new Error(`Cannot find the zetta binary at ${execPath}. Reinstall with: ${INSTALL_HINT}`)
+    throw new Error(`Cannot find the zetta binary at ${execPath}. Reinstall with: ${installHint()}`)
   }
 
   const next = await resolveTarget(base, key, opts, from, fetchImpl, progress)

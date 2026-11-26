@@ -87,14 +87,15 @@ export const configProfiles = defineCommand({
     const profiles = await Promise.all(
       ctx.config.profileNames().map(async (name) => {
         const { profile } = ctx.config.resolveProfile(name, {})
-        const stored = await ctx.credentials.get(name).catch(() => undefined)
+        // Saved sign-ins only: a ZETTA_API_KEY in the environment belongs to no one profile.
+        const stored = await ctx.credentials.get(name, { ignoreEnv: true }).catch(() => undefined)
         return {
           name,
           active: name === ctx.profileName,
           apiUrl: profile.apiUrl,
           siteUrl: profile.siteUrl,
           builtIn: name in BUILT_IN_PROFILES,
-          signedInAs: stored && stored.source !== 'env' ? (stored.credential.email ?? 'yes') : null,
+          signedInAs: stored ? (stored.credential.email ?? 'yes') : null,
         }
       }),
     )

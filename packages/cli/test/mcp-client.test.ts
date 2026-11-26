@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { tokenFor } from './harness'
+import { saveSignIn, tokenFor } from './harness'
 
 /**
  * End to end over real stdio: the official MCP client starts `zetta mcp` as a child process,
@@ -42,11 +42,18 @@ beforeAll(async () => {
 
 afterAll(() => api.close())
 
+/** A config folder holding a browser sign-in, for the server process. */
+function signedInConfig(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'zmcp-'))
+  saveSignIn(dir, tokenFor())
+  return dir
+}
+
 async function connect(args: string[] = []): Promise<Client> {
   const transport = new StdioClientTransport({
     command: 'bun',
     args: ['run', MAIN, 'mcp', ...args],
-    env: { ...(process.env as Record<string, string>), ZETTA_API_URL: apiUrl, ZETTA_TOKEN: tokenFor(), ZETTA_CONFIG_DIR: mkdtempSync(join(tmpdir(), 'zmcp-')), ZETTA_NO_KEYCHAIN: '1' },
+    env: { ...(process.env as Record<string, string>), ZETTA_API_URL: apiUrl, ZETTA_API_KEY: '', ZETTA_TOKEN: '', ZETTA_CONFIG_DIR: signedInConfig(), ZETTA_NO_KEYCHAIN: '1' },
     stderr: 'ignore',
   })
   const client = new Client({ name: 'zetta-test-client', version: '1.0.0' })
@@ -76,20 +83,20 @@ describe('zetta mcp, through a real MCP client', () => {
   it('quotes with dryRun, refuses unconfirmed spending, and spends with maxCredits', async () => {
     const client = await connect()
     try {
-      const dry = await client.callTool({ name: 'generate', arguments: { prompt: 'a small wooden stool', dryRun: true } })
+      const dry = await client.callTool({ name: 'generate', arguments: { image: 'https://files.example/stool.png', dryRun: true } })
       expect(dry.isError).toBeFalsy()
       expect(text(dry)).toMatchObject({ dryRun: true, credits: 28 })
 
-      const refused = await client.callTool({ name: 'generate', arguments: { prompt: 'a small wooden stool' } })
+      const refused = await client.callTool({ name: 'generate', arguments: { image: 'https://files.example/stool.png' } })
       expect(refused.isError).toBe(true)
       expect(text(refused).error.code).toBe('SPEND_NOT_CONFIRMED')
       expect(created).toHaveLength(0)
 
-      const spent = await client.callTool({ name: 'generate', arguments: { prompt: 'a small wooden stool', maxCredits: 50 } })
+      const spent = await client.callTool({ name: 'generate', arguments: { image: 'https://files.example/stool.png', maxCredits: 50 } })
       expect(spent.isError).toBeFalsy()
       expect(text(spent)).toMatchObject({ id: 42, status: 'queued', credits: 28 })
       expect(created).toHaveLength(1)
-      expect(created[0]).toMatchObject({ prompt: 'a small wooden stool', origin: 'cli' })
+      expect(created[0]).toMatchObject({ imageUrl: 'https://files.example/stool.png', origin: 'cli' })
     } finally {
       await client.close()
     }
@@ -98,9 +105,9 @@ describe('zetta mcp, through a real MCP client', () => {
   it('enforces the session budget', async () => {
     const client = await connect(['--budget', '30'])
     try {
-      const first = await client.callTool({ name: 'generate', arguments: { prompt: 'a cup' } })
+      const first = await client.callTool({ name: 'generate', arguments: { image: 'https://files.example/cup.png' } })
       expect(first.isError).toBeFalsy()
-      const second = await client.callTool({ name: 'generate', arguments: { prompt: 'a cup' } })
+      const second = await client.callTool({ name: 'generate', arguments: { image: 'https://files.example/cup.png' } })
       expect(second.isError).toBe(true)
       expect(text(second).error).toMatchObject({ code: 'SPEND_LIMIT' })
     } finally {

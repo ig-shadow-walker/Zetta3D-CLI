@@ -7,8 +7,9 @@ import {
   imageForPromptRequest,
   missingViews,
   needsImageForPrompt,
+  PLAN_REQUIRED_MESSAGE,
   referenceView,
-  VIEW_TYPES,
+  retiredModelMessage,
   ZettaError,
   type DrawView,
   type GenerateEngineId,
@@ -26,22 +27,36 @@ import { renderJob, runPaidJob } from '../core/jobs'
 import { inlinePicture, isUrl, resolvePicture } from '../core/local-files'
 
 /** Accepts the public spellings (n2.5, np1.5) and the ids (n25, np15). */
-export const ENGINE_CHOICES = ['n1', 'n2.5', 'n25', 'np1', 'np1.5', 'np15'] as const
-export function engineId(value: string | undefined, fallback: GenerateEngineId = 'n1'): GenerateEngineId {
+export const ENGINE_CHOICES = ['n2.5', 'n25', 'np1', 'np1.5', 'np15'] as const
+const ENGINE_LIST = 'n2.5 (Generate 3D), np1 and np1.5 (Generate Smart 3D)'
+export function engineId(value: string | undefined, fallback: GenerateEngineId = 'n25'): GenerateEngineId {
   if (!value) return fallback
   const id = value.toLowerCase().replace('zetta ', '').replace('.', '')
-  if (id === 'n1' || id === 'n25' || id === 'np1' || id === 'np15') return id
-  throw usageError(`Unknown engine "${value}". Engines: n1, n2.5, np1, np1.5 (see \`zetta catalog engines\`).`)
+  if (id === 'n25' || id === 'np1' || id === 'np15') return id
+  const retired = retiredModelMessage(id)
+  if (retired) throw usageError(`${retired} Engines: ${ENGINE_LIST}.`)
+  throw usageError(`Unknown engine "${value}". Engines: ${ENGINE_LIST} (see \`zetta catalog engines\`).`)
 }
+
+/** The sides a multi-view generation takes. */
+const VIEW_SLOTS: readonly ViewType[] = ['front', 'back', 'left', 'right']
 
 /** Placeholder URL used to validate and price a request before anything is uploaded. */
 const PLACEHOLDER = 'https://placeholder.invalid/picture.png'
 
-/** Throws one BUILD_PROBLEMS error listing everything that must change. */
+/**
+ * Throws one error listing everything that must change: PLAN_REQUIRED (no paid plan at all),
+ * PLAN_CAPABILITY_REQUIRED (the plan lacks a feature) or BUILD_PROBLEMS (options that conflict).
+ */
 export function failOnProblems(problems: Problem[], what = 'These options do not work together'): never {
+  if (problems.some((p) => p.code === 'PLAN_REQUIRED')) {
+    throw new ZettaError({ code: 'PLAN_REQUIRED', message: PLAN_REQUIRED_MESSAGE, status: 403, details: { problems } })
+  }
+  const planGate = problems.some((p) => p.code.endsWith('_NOT_AVAILABLE') || p.code === 'PLAN_CAPABILITY_REQUIRED')
   throw new ZettaError({
-    code: problems.some((p) => p.code.endsWith('_NOT_AVAILABLE') || p.code === 'PLAN_CAPABILITY_REQUIRED') ? 'PLAN_CAPABILITY_REQUIRED' : 'BUILD_PROBLEMS',
+    code: planGate ? 'PLAN_CAPABILITY_REQUIRED' : 'BUILD_PROBLEMS',
     message: `${what}: ${problems.map((p) => p.message).join(' ')}`,
+    ...(planGate ? { status: 403 } : {}),
     details: { problems },
   })
 }
@@ -60,10 +75,10 @@ function parseViews(values: string[] | undefined): Partial<Record<ViewType, stri
   const views: Partial<Record<ViewType, string>> = {}
   for (const value of values) {
     const at = value.indexOf('=')
-    const slot = (at > 0 ? value.slice(0, at) : '').trim().toLowerCase().replace('-', '_') as ViewType
+    const slot = (at > 0 ? value.slice(0, at) : '').trim().toLowerCase() as ViewType
     const source = at > 0 ? value.slice(at + 1).trim() : ''
-    if (!VIEW_TYPES.includes(slot) || !source) {
-      throw usageError(`--view "${value}" should look like front=./front.png (slots: ${VIEW_TYPES.join(', ')}).`)
+    if (!VIEW_SLOTS.includes(slot) || !source) {
+      throw usageError(`--view "${value}" should look like front=./front.png (slots: ${VIEW_SLOTS.join(', ')}).`)
     }
     views[slot] = source
   }
@@ -74,39 +89,38 @@ export const generate = defineCommand({
   path: ['generate'],
   summary: 'Make a 3D model from a text prompt, a picture, or several views.',
   description: [
-    'Pictures can be local files, URLs, or image:<id> from your image library.',
-    'Engines: n1 (every plan), n2.5, np1, np1.5 (paid plans). See `zetta catalog engines` for what each supports.',
+    'Pictures can be local files, URLs, or image:<id> from your image library. A prompt is made into a picture first, then into a model.',
+    'Engines: n2.5 (the default; quality levels, parts, quads) and the Smart engines np1 and np1.5 (clean topology to a polygon budget, 8K textures). Every generation needs a paid plan. See `zetta catalog engines` for limits and defaults.',
     'The price is checked first: use --dry-run to see it, --yes or --max-credits to spend without a prompt.',
     'In a terminal it waits, then downloads the results into the current folder (the download.auto setting). Scripts and agents get the asset id at once; add --wait to wait, or --out <folder> to wait and download.',
   ].join('\n'),
   kind: 'spend',
   input: z.object({
-    prompt: z.string().min(1).max(5000).optional().describe('Describe the object (text to 3D). With a picture, it guides the result.'),
+    prompt: z.string().min(1).max(1024).optional().describe('Describe the object (text to 3D). A picture is made from it first. Not with --image or --view.'),
     image: z.string().optional().describe('One picture of the object: a file, URL, or image:<id>.'),
-    view: z.array(z.string()).optional().describe('Multi-view pictures as slot=source, e.g. front=f.png back=b.png left=l.png right=r.png.'),
-    engine: z.enum(ENGINE_CHOICES).optional().describe('Engine (default n1, or `defaults.engine` from config).'),
-    quality: z.enum(['lowpoly', 'high', 'ultra']).optional().describe('Low-poly, high-res (default) or ultra detail.'),
+    view: z.array(z.string()).optional().describe('Multi-view pictures as slot=source: front (required) plus at least one of back, left, right.'),
+    engine: z.enum(ENGINE_CHOICES).optional().describe('Engine: n2.5 (default, or `defaults.engine` from config), np1 or np1.5.'),
+    quality: z.enum(['lowpoly', 'high', 'ultra']).optional().describe('N2.5 only: low-poly (1,000–20,000 polygons), high (default, up to 1,000,000) or ultra (up to 2,000,000, a paid extra).'),
     texture: z.boolean().default(true).describe('Textured model (default). --no-texture gives geometry only.'),
     pbr: z.boolean().optional().describe('PBR materials (on by default for textured models; --no-pbr to skip).'),
-    textureQuality: z.enum(['standard', 'detailed', '8k']).optional().describe('Texture detail (8k on Np engines).'),
-    faces: z.number().int().positive().optional().describe('Polygon budget (must fit the engine and quality; see `zetta catalog engines`).'),
-    quads: z.boolean().optional().describe('Quad topology instead of triangles.'),
-    parts: z.boolean().optional().describe('Split into separate editable parts (N2.5, geometry only).'),
-    textureAlignment: z.enum(['image', 'geometry']).optional().describe('Fit the texture to the picture or to the mesh.'),
+    textureQuality: z.enum(['standard', 'detailed', 'extreme', '8k']).optional().describe('Texture detail: standard (default), detailed (HD), or extreme (8K, np1 and np1.5 only; 8k is the same).'),
+    faces: z.number().int().positive().optional().describe('Polygon budget. Defaults to the most the engine and quality allow; another count is a paid extra. See `zetta catalog engines`.'),
+    quads: z.boolean().optional().describe('Quad topology instead of triangles (N2.5 and np1.5).'),
+    parts: z.boolean().optional().describe('Split into separate editable parts (N2.5, geometry only, not low-poly).'),
+    textureAlignment: z.enum(['image', 'geometry']).optional().describe('Fit the texture to the picture, or to the mesh (default).'),
     autoSize: z.boolean().optional().describe('Scale to real-world size.'),
     delight: z.boolean().optional().describe('Remove baked-in lighting from the picture before texturing.'),
     autofix: z.boolean().optional().describe('Clean up the picture before building (slower).'),
     compress: z.boolean().optional().describe('Compress geometry for a smaller file.'),
     uv: z.boolean().default(true).describe('Unwrap UVs (default). --no-uv is faster and smaller.'),
     fastTexture: z.boolean().optional().describe('Faster standard-quality texturing.'),
-    sketch: z.boolean().optional().describe('The picture is a line drawing (N1).'),
     seed: z.number().int().optional().describe('Model seed, for reproducible results.'),
     textureSeed: z.number().int().optional().describe('Texture seed.'),
     removeBg: z.boolean().optional().describe('Remove the background from the picture(s) first.'),
     drawMissing: z.boolean().optional().describe('With --view: draw the missing side views with AI from the front view.'),
     title: z.string().max(200).optional().describe('Title in your library.'),
     tag: z.array(z.string()).optional().describe('Tags.'),
-    visibility: z.enum(['public', 'private']).optional().describe('Share publicly, or keep private (private needs a paid plan).'),
+    visibility: z.enum(['public', 'private']).optional().describe('Share publicly, or keep private. Your plan’s default when left out.'),
     format: z.array(z.string()).optional().describe('When downloading: only these formats (glb, fbx, obj, usdz …).'),
     ...spendShape,
     ...waitShape,
@@ -117,7 +131,7 @@ export const generate = defineCommand({
     'zetta generate --image chair.png --engine n2.5 --out ./models',
     'zetta generate -p "a low-poly treasure chest" --quality lowpoly --dry-run',
     'zetta generate --view front=f.png --view back=b.png --view left=l.png --view right=r.png --yes --wait',
-    'zetta generate -i photo.jpg --remove-bg --engine np1.5 --texture-quality 8k --max-credits 200 --out .',
+    'zetta generate -i photo.jpg --remove-bg --engine np1.5 --quads --faces 8000 --texture-quality extreme --max-credits 200 --out .',
   ],
   async run(ctx, input) {
     const engine = engineId(input.engine ?? ctx.config.file.defaults?.engine)
@@ -128,6 +142,7 @@ export const generate = defineCommand({
 
     const client = await ctx.client()
     const limits = await planLimits(client)
+    // Text to 3D as the Studio does it: a picture from the prompt, then a model from the picture.
     const textFirst = Boolean(input.prompt && !input.image && !views && needsImageForPrompt(engine))
 
     const options = (sources: { imageUrl?: string; views?: Partial<Record<ViewType, string>> }): GenerateInput => ({
@@ -150,7 +165,6 @@ export const generate = defineCommand({
       ...(input.compress ? { compressGeometry: true } : {}),
       ...(input.uv === false ? { exportUv: false } : {}),
       ...(input.fastTexture ? { textureFast: true } : {}),
-      ...(input.sketch ? { sketch: true } : {}),
       ...(input.seed !== undefined ? { modelSeed: input.seed } : {}),
       ...(input.textureSeed !== undefined ? { textureSeed: input.textureSeed } : {}),
       ...(input.title ? { title: input.title } : {}),

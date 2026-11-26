@@ -40,4 +40,4 @@ for (const file of selectResultFiles(done.generation, { primary: true })) {
 | `export` | GLB → OBJ (with MTL and textures) or binary STL, locally |
 | `files` | Picture, video and GLB detection, the engines' input checks, base64 helpers |
 
-The package is private for now. It could be published once the API offers API keys (see ROADMAP.md, B3).
+The package is private for now.

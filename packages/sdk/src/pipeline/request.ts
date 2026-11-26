@@ -4,7 +4,7 @@
  * `request`, built here by the Studio's own rules, so a node sends exactly what the Studio would. The
  * server reads only `request`, adding the inputs that arrive along the connections.
  */
-import { outputType } from './catalogue'
+import { isMultiViewGenerate, outputType } from './catalogue'
 import { buildCreateRequest, deriveSpec, formatCount, type GenerateForm } from './generate-form'
 import { effectiveSettings } from './settings'
 import {
@@ -20,7 +20,7 @@ import {
   splatRequest,
   textureRequest,
 } from './tool-settings'
-import type { PipelineGraph, PipelineNode, PortType } from './types'
+import { VIEW_TYPES, type PipelineGraph, type PipelineNode, type PortType, type ViewSeed } from './types'
 
 /** What a node's request depends on beyond its settings. */
 export interface NodeContext {
@@ -55,6 +55,22 @@ function generateRequest(form: GenerateForm, context: NodeContext): Settings {
 }
 
 /**
+ * A multi-view set as the server reads it (the editor's `viewsRequest`): each given side once, in the
+ * slots' order — front, back, left, right — with its upload key or library picture, and its name.
+ */
+export function viewsRequest(set: unknown): ViewSeed[] {
+  const value = (typeof set === 'object' && set !== null && !Array.isArray(set) ? set : {}) as Record<string, unknown>
+  return VIEW_TYPES.flatMap((viewType): ViewSeed[] => {
+    const view = value[viewType] as { uploadKey?: unknown; gen2dPostId?: unknown; name?: unknown } | undefined
+    if (!view || typeof view !== 'object') return []
+    const name = typeof view.name === 'string' && view.name ? { name: view.name } : {}
+    if (typeof view.uploadKey === 'string' && view.uploadKey) return [{ viewType, uploadKey: view.uploadKey, ...name }]
+    if (typeof view.gen2dPostId === 'number') return [{ viewType, gen2dPostId: view.gen2dPostId, ...name }]
+    return []
+  })
+}
+
+/**
  * The request a node's settings build. Never throws: a form the Studio would refuse yields the
  * engine alone, and `nodeProblems` says why. Settings missing a field read the editor's default for it.
  */
@@ -64,6 +80,7 @@ export function requestFor(node: Pick<PipelineNode, 'kind' | 'settings'>, contex
     // The seed is chosen for each run, never kept in the pipeline.
     case 'seed_picture':
     case 'seed_model':
+    case 'seed_views':
     case 'remove_background':
       return {}
     case 'ai_edit':
@@ -88,6 +105,10 @@ export function requestFor(node: Pick<PipelineNode, 'kind' | 'settings'>, contex
     case 'generate_3d':
     case 'generate_smart_3d':
       return generateRequest(settings as unknown as GenerateForm, context)
+    // Pictures of each side, always — built as the Studio's Multi-View to 3D builds them.
+    case 'generate_3d_multiview':
+    case 'generate_smart_3d_multiview':
+      return generateRequest(settings as unknown as GenerateForm, { ...context, incoming: 'views' })
     case 'generate_splat': {
       const { model, removeBackground } = splatRequest(settings)
       const title = typeof settings.title === 'string' ? settings.title.trim() : ''
@@ -115,6 +136,13 @@ export function requestFor(node: Pick<PipelineNode, 'kind' | 'settings'>, contex
         removeReferenceBackground: settings.removeBg !== false,
       }
     }
+    // Pictures of each side in place of a description or one picture; views wired in win, on the server.
+    case 'texture_multiview':
+      return {
+        ...postProcessBody(textureRequest(settings)),
+        referenceViews: viewsRequest(settings.referenceViews),
+        removeReferenceBackground: settings.removeBg !== false,
+      }
     case 'smart_uv':
       return postProcessBody(smartUvRequest(settings))
     case 'rigging':
@@ -165,7 +193,7 @@ export function nodeProblems(
       },
     ]
   }
-  if (node.kind !== 'generate_3d' && node.kind !== 'generate_smart_3d') return []
+  if (node.kind !== 'generate_3d' && node.kind !== 'generate_smart_3d' && !isMultiViewGenerate(node.kind)) return []
   const form = settings as unknown as GenerateForm
   const built = buildCreateRequest(
     { ...form, imageUrl: INPUT_PLACEHOLDER, prompt: '', imageFromPrompt: false },

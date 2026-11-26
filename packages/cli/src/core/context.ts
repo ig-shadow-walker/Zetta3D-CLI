@@ -1,9 +1,10 @@
 import { resolve } from 'node:path'
 import { createInterface } from 'node:readline/promises'
-import { ZettaClient, ZettaError, tokenExpiry } from '@zetta3d/sdk'
+import { Writable } from 'node:stream'
+import { LocalErrorCodes, ZettaClient, ZettaError, tokenExpiry } from '@zetta3d/sdk'
 import { VERSION } from '../version'
 import { ConfigStore, type Profile } from './config'
-import { CredentialStore, type CredentialSource, type StoredCredential } from './credentials'
+import { CredentialStore, type ResolvedCredential } from './credentials'
 import { cliError } from './errors'
 import { Output, resolveFormat, type OutputFormat, type ProgressEvent, type Streams } from './output'
 import { configDir } from './paths'
@@ -110,23 +111,51 @@ export class Context {
     return !this.env.SSH_CONNECTION && !this.env.SSH_TTY
   }
 
-  async storedCredential(): Promise<{ credential: StoredCredential; source: CredentialSource } | undefined> {
+  /** The credential in use: ZETTA_API_KEY, then the profile's saved sign-in. */
+  async storedCredential(): Promise<ResolvedCredential | undefined> {
     return this.credentials.get(this.profileName)
   }
 
-  /** An API client signed in as the current profile; throws NOT_LOGGED_IN when there is no token. */
+  /**
+   * An API client signed in as the current profile, with a session token or an API key; throws
+   * NOT_LOGGED_IN when there is neither. An API key opens only part of the API: commands that need
+   * a browser sign-in use `sessionClient()` instead.
+   */
   async client(): Promise<ZettaClient> {
     if (this.clientCache) return this.clientCache
     const stored = await this.storedCredential()
     if (!stored) {
-      throw cliError('NOT_LOGGED_IN', `Not signed in${this.profileName === 'default' ? '' : ` (profile "${this.profileName}")`}.`)
+      // ZETTA_TOKEN was read by older versions; say so rather than leave someone wondering.
+      const legacy = this.env.ZETTA_TOKEN?.trim() ? ' ZETTA_TOKEN is no longer read: sign in with `zetta auth login`, or use an API key (ZETTA_API_KEY).' : ''
+      throw cliError('NOT_LOGGED_IN', `Not signed in${this.profileName === 'default' ? '' : ` (profile "${this.profileName}")`}.${legacy}`)
     }
-    const expiry = stored.credential.expiresAt ? new Date(stored.credential.expiresAt) : tokenExpiry(stored.credential.token)
-    if (expiry && expiry.getTime() < Date.now()) {
-      throw new ZettaError({ code: 'INVALID_SESSION', message: 'Your sign-in has expired.', status: 401 })
+    // An API key is not a JWT and has no expiry: only a session token is checked here.
+    if (stored.kind === 'session') {
+      const expiry = stored.credential.expiresAt ? new Date(stored.credential.expiresAt) : tokenExpiry(stored.credential.token)
+      if (expiry && expiry.getTime() < Date.now()) {
+        throw new ZettaError({ code: 'INVALID_SESSION', message: 'Your sign-in has expired.', status: 401 })
+      }
     }
     this.clientCache = this.makeClient(stored.credential.token)
     return this.clientCache
+  }
+
+  /**
+   * A client for routes an API key never opens (key management, billing changes, trial codes, the
+   * account itself). With a key it fails here, before any request, with API_KEY_NOT_ALLOWED.
+   */
+  async sessionClient(what: string): Promise<ZettaClient> {
+    const stored = await this.storedCredential()
+    if (stored?.kind === 'api_key') {
+      const from = stored.envVar ? ` from ${stored.envVar}` : ''
+      throw new ZettaError({
+        code: LocalErrorCodes.API_KEY_NOT_ALLOWED,
+        message: `${what} needs a browser sign-in; this profile is using an API key${from}, and API keys cannot do that.`,
+        status: 403,
+        details: { credential: 'api_key', ...(stored.envVar ? { envVar: stored.envVar } : {}) },
+      })
+    }
+    return this.client()
   }
 
   /** A client without a token, for public routes and signing in. */
@@ -142,6 +171,11 @@ export class Context {
       userAgent: USER_AGENT,
       ...(this.fetchImpl ? { fetch: this.fetchImpl } : {}),
       onRequest: ({ method, url, attempt }) => this.out.debug(`${method} ${url}${attempt > 1 ? ` (attempt ${attempt})` : ''}`),
+      onRetry: ({ status, waitMs }) => {
+        // Only a wait worth noticing is announced; short backoffs stay in --verbose.
+        if (status === 429 && waitMs >= 2000) this.out.info(`Rate limited; trying again in ${Math.ceil(waitMs / 1000)}s…`)
+        else this.out.debug(`retrying in ${waitMs} ms${status ? ` after ${status}` : ''}`)
+      },
     })
   }
 
@@ -161,7 +195,25 @@ export class Context {
     }
   }
 
-  /** Reads all of stdin (for `--with-token`, `--input -`). */
+  /**
+   * Asks for a secret without echoing it (for `auth login --api-key` in a terminal). The typed
+   * characters go nowhere: the prompt goes to stderr, then output is muted until Enter.
+   */
+  async askSecret(question: string): Promise<string> {
+    if (!this.interactive || !this.streams.stdin) throw cliError('USAGE', 'Input is needed but there is no terminal to ask in.')
+    const stderr = this.streams.stderr
+    stderr.write(question)
+    const muted = new Writable({ write: (_chunk, _encoding, done) => done() })
+    const rl = createInterface({ input: this.streams.stdin, output: muted, terminal: true })
+    try {
+      return await rl.question('')
+    } finally {
+      rl.close()
+      stderr.write('\n')
+    }
+  }
+
+  /** Reads all of stdin (for `--api-key`, `--input -`). */
   async readStdin(): Promise<string> {
     const stdin = this.streams.stdin
     if (!stdin) return ''

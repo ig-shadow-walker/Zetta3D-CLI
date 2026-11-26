@@ -218,6 +218,60 @@ describe('compilePipeline', () => {
     expect(refused({ steps: { photo: { kind: 'seed_picture' }, topo: { kind: 'retopology', from: 'photo' } } })).toEqual([
       { code: 'PORT_MISMATCH', nodeId: 'topo', message: 'This input takes a mesh, not a picture.' },
     ])
+    expect(refused({ steps: { photo: { kind: 'seed_picture' }, gen: { kind: 'generate_smart_3d_multiview', from: 'photo' } } })[0]!.message).toBe(
+      'Multi-view - Smart 3D takes pictures of each side — connect a Multi-view seed or Draw views, or use Generate Smart 3D for one picture.',
+    )
+  })
+
+  it('reads an older recipe — a one-picture generation fed views — as its multi-view step, and says so', () => {
+    const { graph, warnings } = compiled({
+      steps: {
+        photo: { kind: 'seed_picture' },
+        views: { kind: 'draw_views', from: 'photo' },
+        gen: { kind: 'generate_3d', from: 'views', quality: 'ultra' },
+      },
+    })
+    expect(nodeOf(graph, 'gen')).toMatchObject({ kind: 'generate_3d_multiview', settings: { quality: 'ultra' } })
+    expect((nodeOf(graph, 'gen').request!.spec as { generation: { modifiers: string[] } }).generation.modifiers).toContain('multi_view')
+    expect(warnings).toEqual([
+      'Step "gen": generate_3d takes one picture; fed pictures of each side it is generate_3d_multiview — write that kind.',
+    ])
+  })
+
+  it('compiles a Multi-view seed into multi-view steps, and asks each run for what it gives', () => {
+    const { graph, warnings } = compiled(PIPELINE_DOC_EXAMPLES[3]!.doc)
+    expect(wiresOf(graph)).toEqual(['photos.out->model.in', 'model.out->paint.in', 'photos.out->paint.views', 'paint.out->uv.in'])
+    expect(nodeOf(graph, 'photos')).toMatchObject({ kind: 'seed_views', settings: {}, request: {} })
+    expect(nodeOf(graph, 'model')).toMatchObject({ settings: { model: 'np15', polygonCount: '12000' }, request: { model: 'np15', faceCount: 12000 } })
+    expect(nodeOf(graph, 'paint').request).toMatchObject({ spec: { postProcess: ['retexture_hd'] }, referenceViews: [], removeReferenceBackground: true })
+    // Views wired in: nothing more for each run to give.
+    expect(warnings).toEqual([])
+    const unwired = compiled({ steps: { ...PIPELINE_DOC_EXAMPLES[3]!.doc.steps, paint: { kind: 'texture_multiview', from: 'model' } } })
+    expect(unwired.warnings).toEqual([
+      'Step "paint": each run must give it — Multi-view - AI texturing: add the pictures of each side — a front one at least.',
+    ])
+  })
+
+  it('takes pictures of each side as { front, back, left, right }, the front required', () => {
+    const steps = (views: unknown) => ({
+      steps: { m: { kind: 'seed_model' }, paint: { kind: 'texture_multiview', from: 'm', views } },
+    })
+    const { graph, warnings } = compiled(steps({ back: { gen2dPostId: 4 }, front: { uploadKey: 'inputImg/7/f.png', name: 'f.png' } }))
+    expect(nodeOf(graph, 'paint').settings!.referenceViews).toEqual({ front: { uploadKey: 'inputImg/7/f.png', name: 'f.png' }, back: { gen2dPostId: 4 } })
+    expect(nodeOf(graph, 'paint').request!.referenceViews).toEqual([
+      { viewType: 'front', uploadKey: 'inputImg/7/f.png', name: 'f.png' },
+      { viewType: 'back', gen2dPostId: 4 },
+    ])
+    expect(warnings).toEqual([])
+    expect(refused(steps({ back: { gen2dPostId: 4 } }))[0]).toMatchObject({ code: 'SETTING_INVALID', field: 'views', message: 'views needs a front picture.' })
+    expect(refused(steps({ front: { gen2dPostId: 4 }, top: { gen2dPostId: 5 } }))[0]!.message).toBe('views names sides front, back, left, right only.')
+    expect(refused(steps({ front: 'f.png' }))[0]!.code).toBe('SETTING_INVALID')
+  })
+
+  it('gives a Multi-view seed no settings: each run gives its pictures', () => {
+    expect(refused({ steps: { photos: { kind: 'seed_views', views: {} } } })[0]!.message).toBe(
+      'seed_views has no settings: each run is given its pictures of each side as a seed.',
+    )
   })
 })
 
@@ -259,7 +313,7 @@ describe('compilePipeline — every document problem', () => {
 
   it('never repeats a refused value, and lists what is allowed', () => {
     const problems = refused({ steps: { ...base, gen: { kind: 'generate_3d', from: 'photo', engine: 'secret-engine' } } })
-    expect(problems).toEqual([{ code: 'SETTING_INVALID', nodeId: 'gen', field: 'engine', message: 'engine must be one of: n1, n25.' }])
+    expect(problems).toEqual([{ code: 'SETTING_INVALID', nodeId: 'gen', field: 'engine', message: 'engine must be one of: n25.' }])
     expect(refused({ steps: { ...base, cut: { kind: 'remove_background', from: 'photo', strength: 2 } } })[0]!.message).toBe(
       'remove_background has no settings.',
     )
@@ -293,7 +347,7 @@ function editorGraph(): PipelineGraph {
   const seed = add('seed_picture', defaultSettings('seed_picture'), { x: 40, y: 80 })
   const iso = add('isolate_parts', { ...defaultSettings('isolate_parts'), sensitivity: 'medium', knownParts: [{ key: 'sword', label: 'Sword' }] }, { x: 320, y: 90 })
   const views = add('draw_views', { views: ['back', 'left'] }, { x: 610, y: 12 })
-  const hero = add('generate_3d', { ...form('generate_3d', { quality: 'ultra' }, { polygonCount: '500000', polygonCountTyped: true }) }, { x: 900, y: 0 }, 'Hero')
+  const hero = add('generate_3d_multiview', { ...form('generate_3d', { quality: 'ultra' }, { polygonCount: '500000', polygonCountTyped: true }) }, { x: 900, y: 0 }, 'Hero')
   const rig = add('rigging', { ...defaultSettings('rigging'), rigType: 'quadruped', spec: 'mixamo' }, { x: 1200, y: 0 })
   const sword = add('generate_smart_3d', { ...form('generate_smart_3d', { model: 'np15' }, { polygonType: 'quadrilateral' }) }, { x: 620, y: 300 })
   const topo = add('retopology', { ...defaultSettings('retopology'), faces: 6000, bake: false }, { x: 910, y: 310 })
@@ -353,10 +407,10 @@ describe('decompilePipeline', () => {
     expect(byKind('generate_smart_3d')).toMatchObject({ engine: 'np15', polygonType: 'quad' })
     expect(byKind('texture')).toMatchObject({ tier: '8k', alignment: 'mesh' })
     expect(byKind('ai_edit')).toEqual({ kind: 'ai_edit', from: expect.stringMatching(/\.each$/), askAtRun: true, imageEngine: 'image-x' })
-    expect(byKind('generate_3d')).toMatchObject({ label: 'Hero', quality: 'ultra', polygonCount: 500000 })
+    expect(byKind('generate_3d_multiview')).toMatchObject({ label: 'Hero', quality: 'ultra', polygonCount: 500000 })
     // What friendly names cannot say is kept raw.
     expect(byKind('isolate_parts').settings).toEqual({ knownParts: [{ key: 'sword', label: 'Sword' }] })
-    expect(byKind('generate_3d').settings).toEqual({ polygonCountTyped: true })
+    expect(byKind('generate_3d_multiview').settings).toEqual({ polygonCountTyped: true })
     expect(doc.layout).toBeDefined()
   })
 
@@ -581,6 +635,98 @@ function check(schema: Schema, value: unknown, root: Schema = schema, path = '$'
   }
   return errors
 }
+
+/* -------------------------------------------------------------------- multi-view round trips */
+
+/** A multi-view graph as the web editor saves one: a Multi-view seed into both multi-view steps, and a one-picture branch. */
+function multiViewEditorGraph(): PipelineGraph {
+  const node = (id: string, kind: PipelineNode['kind'], settings: Record<string, unknown>, position: { x: number; y: number }): PipelineNode => ({
+    id,
+    kind,
+    position,
+    settings,
+  })
+  return withRequests({
+    version: 1,
+    nodes: [
+      node('mv-seed', 'seed_views', defaultSettings('seed_views'), { x: 0, y: 0 }),
+      node('smart', 'generate_smart_3d_multiview', settingsWithDefaults('generate_smart_3d_multiview', { model: 'np15', polygonType: 'quadrilateral' }), { x: 310, y: 0 }),
+      node('hero', 'generate_3d_multiview', settingsWithDefaults('generate_3d_multiview', { quality: 'ultra', output: 'geometry' }), { x: 310, y: 220 }),
+      node('paint', 'texture_multiview', { ...defaultSettings('texture_multiview'), tier: 'retexture_8k', removeBg: false }, { x: 620, y: 0 }),
+      // A run's own pictures, with the previews the editor keeps beside them.
+      node(
+        'paint2',
+        'texture_multiview',
+        {
+          ...defaultSettings('texture_multiview'),
+          referenceViews: {
+            front: { uploadKey: 'inputImg/7/f.png', name: 'f.png', thumbnail: 'data:image/png;base64,AAAA' },
+            left: { gen2dPostId: 12, name: 'Chair side', thumbnail: null },
+          },
+        },
+        { x: 620, y: 220 },
+      ),
+      node('tex', 'texture', { ...defaultSettings('texture'), prompt: '', reference: null }, { x: 930, y: 0 }),
+    ],
+    edges: [
+      { id: 'a', source: 'mv-seed', sourceHandle: 'out', target: 'smart', targetHandle: 'in' },
+      { id: 'b', source: 'mv-seed', sourceHandle: 'out', target: 'hero', targetHandle: 'in' },
+      { id: 'c', source: 'smart', sourceHandle: 'out', target: 'paint', targetHandle: 'in' },
+      { id: 'd', source: 'mv-seed', sourceHandle: 'out', target: 'paint', targetHandle: 'views' },
+      { id: 'e', source: 'hero', sourceHandle: 'out', target: 'paint2', targetHandle: 'in' },
+      { id: 'f', source: 'paint', sourceHandle: 'out', target: 'tex', targetHandle: 'in' },
+    ],
+  })
+}
+
+describe('decompilePipeline — multi-view steps', () => {
+  it('round-trips a multi-view graph made by the web editor', () => {
+    const graph = multiViewEditorGraph()
+    const { doc, warnings } = decompilePipeline(graph)
+    expect(warnings).toEqual([])
+    expect(comparable(compiled(doc, { validate: false }).graph)).toEqual(comparable(graph))
+  })
+
+  it('writes the multi-view steps in friendly names, and keeps only the editor’s previews raw', () => {
+    const { doc } = decompilePipeline(multiViewEditorGraph())
+    expect(doc.steps['mv-seed']).toEqual({ kind: 'seed_views' })
+    expect(doc.steps.smart).toEqual({ kind: 'generate_smart_3d_multiview', from: 'mv-seed', engine: 'np15', polygonType: 'quad' })
+    expect(doc.steps.paint).toEqual({ kind: 'texture_multiview', from: { in: 'smart', views: 'mv-seed' }, tier: '8k', removeReferenceBackground: false })
+    // The editor's previews cannot be said in friendly names, so the set is carried raw — and only raw.
+    expect(doc.steps.paint2).toEqual({
+      kind: 'texture_multiview',
+      from: 'hero',
+      settings: { referenceViews: multiViewEditorGraph().nodes[4]!.settings!.referenceViews },
+    })
+    expect(check(PIPELINE_DOC_JSON_SCHEMA, doc)).toEqual([])
+  })
+
+  it('leaves out the empty pictures a new run’s copy gives AI texturing', () => {
+    const graph: PipelineGraph = {
+      version: 1,
+      nodes: [
+        { id: 'm', kind: 'seed_model', position: { x: 0, y: 0 }, settings: {} },
+        { id: 'tex', kind: 'texture', position: { x: 300, y: 0 }, settings: { ...defaultSettings('texture'), prompt: 'oak', referenceViews: {} } },
+      ],
+      edges: [{ id: 'e', source: 'm', sourceHandle: 'out', target: 'tex', targetHandle: 'in' }],
+    }
+    expect(decompilePipeline(graph).doc.steps.tex).toEqual({ kind: 'texture', from: 'm', prompt: 'oak' })
+  })
+
+  it('sets a draft run’s pictures of each side from friendly fields', () => {
+    const graph = multiViewEditorGraph()
+    const change = runNodeChange(graph, 'paint2', { views: { front: { gen2dPostId: 3 }, back: { uploadKey: 'inputImg/7/b.png', name: 'b.png' } } })
+    expect(change.ok).toBe(true)
+    if (!change.ok) return
+    expect(change.body.settings.referenceViews).toEqual({ front: { gen2dPostId: 3 }, back: { uploadKey: 'inputImg/7/b.png', name: 'b.png' } })
+    expect(change.body.request.referenceViews).toEqual([
+      { viewType: 'front', gen2dPostId: 3 },
+      { viewType: 'back', uploadKey: 'inputImg/7/b.png', name: 'b.png' },
+    ])
+    const refusedChange = runNodeChange(graph, 'paint2', { views: { back: { gen2dPostId: 3 } } })
+    expect(refusedChange.ok).toBe(false)
+  })
+})
 
 describe('PIPELINE_DOC_JSON_SCHEMA', () => {
   it('describes every kind and every setting the catalogue has', () => {

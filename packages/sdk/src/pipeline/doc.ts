@@ -19,7 +19,7 @@
  */
 import { NODE_KINDS, OFFERED_NODE_KINDS, inputPort, isNodeKind, isSeed, outputType, settingSpecByKey } from './catalogue'
 import { withRequests, type NodeContext } from './request'
-import { graphWarnings, runInputProblems, topologicalOrder, validateGraph, type ValidateOptions } from './rules'
+import { graphWarnings, runInputProblems, topologicalOrder, validateGraph, withMultiViewSteps, type ValidateOptions } from './rules'
 import {
   RIG_SPEC_REPLACED_MESSAGE,
   defaultSettings,
@@ -113,6 +113,13 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const say = (id: string, message: string) => `Step "${id}": ${message}`
+
+/** What each run gives a seed step. */
+const SEED_GIVES: Record<string, string> = {
+  seed_picture: 'picture',
+  seed_model: 'model',
+  seed_views: 'pictures of each side',
+}
 
 /** The output a bare step reference means: its one output, or null when it has several. */
 function defaultOutput(kind: string): string | null {
@@ -235,7 +242,7 @@ export function compilePipeline(doc: unknown, options: CompileOptions = {}): Com
           code: DOC_PROBLEM_CODES.unknownSetting,
           nodeId: id,
           field: name,
-          message: `${kind} has no settings: each run is given its ${kind === 'seed_model' ? 'model' : 'picture'} as a seed.`,
+          message: `${kind} has no settings: each run is given its ${SEED_GIVES[kind] ?? 'seed'} as a seed.`,
         })
       }
       continue
@@ -378,6 +385,15 @@ export function compilePipeline(doc: unknown, options: CompileOptions = {}): Com
   if (problems.length) return fail()
 
   let graph: PipelineGraph = { version: PIPELINE_GRAPH_VERSION, nodes, edges }
+  // A one-picture generation fed views is its multi-view step, as the server reads it.
+  const converted = withMultiViewSteps(graph)
+  converted.nodes.forEach((node, index) => {
+    const before = graph.nodes[index]!.kind
+    if (node.kind !== before) {
+      warnings.push(say(node.id, `${before} takes one picture; fed pictures of each side it is ${node.kind} — write that kind.`))
+    }
+  })
+  graph = converted
   const auto = autoLayout(graph)
   graph = {
     ...graph,
@@ -420,12 +436,19 @@ export interface DecompileResult {
   warnings: string[]
 }
 
+const isEmptyObject = (value: unknown) => isRecord(value) && Object.keys(value).length === 0
+
 /** A step's settings as friendly fields, plus the raw settings they cannot say. */
 function friendlySettings(
   kind: NodeKind,
   original: Record<string, unknown>,
 ): { fields: Record<string, unknown>; residue: Record<string, unknown> } {
   const specs = NODE_KINDS[kind].settings
+  if (kind === 'texture' && isEmptyObject(original.referenceViews)) {
+    // What a new run's copy empties on AI texturing (`withoutRunInput`); AI texturing itself never reads it.
+    const { referenceViews: _empty, ...rest } = original
+    original = rest
+  }
   const full = { ...defaultSettings(kind), ...original }
   const fields: Record<string, unknown> = {}
   for (const spec of specs) {

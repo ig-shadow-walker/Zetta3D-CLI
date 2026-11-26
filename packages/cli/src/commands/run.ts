@@ -7,6 +7,7 @@ import { downloadAsset, waitPlan } from '../core/jobs'
 import { isUrl, uploadLocal } from '../core/local-files'
 import { table } from '../core/output'
 import { authorizeSpend } from '../core/spend'
+import { viewPicture, viewSetsFrom } from './pipeline'
 
 const runId = z.number().int().positive().describe('Run id (from `zetta pipeline runs <id>` or a batch result).')
 
@@ -16,12 +17,29 @@ export interface RunSummary {
   status: string
   mode: string
   paused: boolean
+  /** What it started from: a picture, a model, or pictures of each side (and which sides). */
+  seed?: { type: string; name: string | null; views?: string[] }
   estimatedCredits: number | null
   spentCredits: number | null
   steps: Array<{ stepId: number; step: string; kind: string | null; part: string | null; status: string; assetId: number | null; credits: number | null; attempt: number; error: string | null }>
-  blocked: Array<{ stepId: number; step: string; reason: string; next: string }>
+  /** What waits on a person. `stepId` is null for a draft's step, which has no step record until it starts. */
+  blocked: Array<{ stepId: number | null; step: string; reason: string; next: string }>
   createdAt?: string
   next?: string
+}
+
+function seedOf(run: PipelineRun): RunSummary['seed'] | undefined {
+  const seed = run.seed as { type?: unknown; name?: unknown; views?: unknown } | null | undefined
+  if (!seed || typeof seed.type !== 'string') return undefined
+  const views = Array.isArray(seed.views)
+    ? seed.views.map((view) => (view as { viewType?: unknown })?.viewType).filter((side): side is string => typeof side === 'string')
+    : undefined
+  return { type: seed.type, name: typeof seed.name === 'string' ? seed.name : null, ...(views ? { views } : {}) }
+}
+
+/** The flag that gives a step its per-run input. */
+function inputFlag(kind: string | undefined): string {
+  return kind === 'texture_multiview' ? '--views front=a.png,back=b.png' : '--prompt "…"'
 }
 
 /** A compact view of a run: one line per step, plus what (if anything) waits on a person. */
@@ -41,22 +59,32 @@ export function summarizeRun(run: PipelineRun): RunSummary {
   const blocked: RunSummary['blocked'] = []
   for (const step of steps) {
     if (step.status === 'review') blocked.push({ stepId: step.stepId, step: step.step, reason: 'Isolate Parts found parts; choose which to keep.', next: `zetta run confirm-parts ${run.id} ${step.stepId} --keys <part,…>` })
-    else if (step.status === 'ready' && run.mode === 'manual') blocked.push({ stepId: step.stepId, step: step.step, reason: 'Manual mode: ready to run.', next: `zetta run step-run ${run.id} ${step.stepId}` })
+    // Manual mode: a step that is due waits for its Run (`waiting`); `ready` is already on its way.
+    else if (step.status === 'waiting') blocked.push({ stepId: step.stepId, step: step.step, reason: 'Manual mode: waiting for you to run it.', next: `zetta run step-run ${run.id} ${step.stepId}` })
     else if (step.status === 'failed') blocked.push({ stepId: step.stepId, step: step.step, reason: step.error ?? 'Failed (refunded).', next: `zetta run step-retry ${run.id} ${step.stepId}` })
   }
+  // A draft names each step that needs its per-run input before Start.
+  if (run.status === 'draft' && run.graph) {
+    for (const need of P.runInputProblems(P.parseGraph(run.graph))) {
+      if (!need.nodeId) continue
+      blocked.push({ stepId: null, step: need.nodeId, reason: need.message, next: `zetta run set-input ${run.id} ${need.nodeId} ${inputFlag(kinds.get(need.nodeId))}` })
+    }
+  }
+  const seed = seedOf(run)
   const summary: RunSummary = {
     id: run.id,
     pipelineId: run.pipelineId,
     status: run.status,
     mode: run.mode,
     paused: Boolean(run.paused),
+    ...(seed ? { seed } : {}),
     estimatedCredits: run.estimatedCredits ?? null,
     spentCredits: run.spentCredits ?? null,
     steps,
     blocked,
     ...(run.createdAt ? { createdAt: run.createdAt } : {}),
   }
-  if (run.status === 'draft') summary.next = `zetta run set-input ${run.id} <step> --prompt "…" (if needed), then zetta run start ${run.id}`
+  if (run.status === 'draft') summary.next = blocked.length ? `${blocked[0]!.next}, then zetta run start ${run.id}` : `zetta run start ${run.id}`
   else if (run.status === 'paused' || run.paused) summary.next = `zetta run resume ${run.id}`
   else if (run.status === 'done') summary.next = `zetta run outputs ${run.id} --out ./out`
   else if (!['failed', 'cancelled'].includes(run.status)) summary.next = `zetta run wait ${run.id} --timeout 90s`
@@ -234,10 +262,23 @@ export const runMode = defineCommand({
   text: renderRun,
 })
 
+/** `--set key=value` pairs as friendly fields: true/false and numbers read as such, the rest as text. */
+export function setPairs(pairs: readonly string[]): Record<string, unknown> {
+  const fields: Record<string, unknown> = {}
+  for (const pair of pairs) {
+    const at = pair.indexOf('=')
+    if (at <= 0) throw usageError(`--set "${pair}" should be key=value.`)
+    const raw = pair.slice(at + 1)
+    fields[pair.slice(0, at)] = raw === 'true' ? true : raw === 'false' ? false : /^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw
+  }
+  return fields
+}
+
 export const runSetInput = defineCommand({
   path: ['run', 'set-input'],
   summary: 'Set a step’s per-run input or settings before it runs (e.g. a draft’s texture prompt).',
-  description: 'Use friendly setting names as in recipes: --prompt, --reference, or --set key=value for anything else.',
+  description:
+    'Use friendly setting names as in recipes: --prompt (AI edit, AI texturing), --reference (AI texturing), --views (Multi-view - AI texturing: front=a.png,back=b.png), or --set key=value for anything else.',
   kind: 'write',
   positionals: [
     { name: 'id', required: true },
@@ -248,9 +289,17 @@ export const runSetInput = defineCommand({
     step: z.string().describe('The step id (as in the recipe).'),
     prompt: z.string().max(5000).optional().describe('Instruction or description for this run.'),
     reference: z.string().optional().describe('A reference picture for this run: a file or image:<id>.'),
+    views: z
+      .array(z.string())
+      .optional()
+      .describe('Pictures of each side for this run (Multi-view - AI texturing): front=a.png,back=b.png,left=c.png,right=d.png — front required; image:<id> works too.'),
     set: z.array(z.string()).optional().describe('Other settings as key=value (friendly names).'),
   }),
-  examples: ['zetta run set-input 88 paint --prompt "matte black ceramic"', 'zetta run set-input 88 gen --set quality=ultra'],
+  examples: [
+    'zetta run set-input 88 paint --prompt "matte black ceramic"',
+    'zetta run set-input 88 paint --views front=f.png,back=b.png,left=l.png',
+    'zetta run set-input 88 gen --set quality=ultra',
+  ],
   async run(ctx, input) {
     const client = await ctx.client()
     const run = await client.runs.get(input.id)
@@ -262,13 +311,21 @@ export const runSetInput = defineCommand({
       else if (isUrl(input.reference)) throw usageError('--reference takes a local file or image:<id>.')
       else fields.reference = { uploadKey: (await uploadLocal(ctx, client, input.reference, 'picture')).key }
     }
-    for (const pair of input.set ?? []) {
-      const at = pair.indexOf('=')
-      if (at <= 0) throw usageError(`--set "${pair}" should be key=value.`)
-      const raw = pair.slice(at + 1)
-      fields[pair.slice(0, at)] = raw === 'true' ? true : raw === 'false' ? false : /^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw
+    if (input.views?.length) {
+      const sets = viewSetsFrom(input.views)
+      if (sets.length !== 1) throw usageError('--views gives one set of pictures of each side: one front, and back/left/right.')
+      const set: Record<string, unknown> = {}
+      const cache = new Map<string, string>()
+      for (const side of P.VIEW_TYPES) {
+        const value = sets[0]!.views[side]
+        if (!value) continue
+        const { viewType: _side, ...picture } = await viewPicture(ctx, client, side, value, cache)
+        set[side] = picture
+      }
+      fields.views = set
     }
-    if (!Object.keys(fields).length) throw usageError('Give --prompt, --reference or --set.')
+    Object.assign(fields, setPairs(input.set ?? []))
+    if (!Object.keys(fields).length) throw usageError('Give --prompt, --reference, --views or --set.')
     const change = P.runNodeChange(P.parseGraph(run.graph), input.step, fields)
     if (!change.ok) throw new ZettaError({ code: 'USAGE', message: change.problems.map((p) => p.message).join(' '), details: { problems: change.problems } })
     for (const warning of change.warnings) ctx.out.warn(warning)
@@ -289,6 +346,9 @@ export const runStepRun = defineCommand({
   async run(ctx, input) {
     const client = await ctx.client()
     const run = await client.runs.get(input.id)
+    const step = run.steps.find((s) => s.id === input.stepId)
+    if (!step) throw new ZettaError({ code: 'NOT_FOUND', message: `Run #${input.id} has no step ${input.stepId}.`, status: 404 })
+    if (step.status !== 'waiting') throw usageError(`Step ${input.stepId} (${step.nodeId}) is ${step.status}, not waiting to run.`)
     const decision = await authorizeSpend(ctx, remaining(run), input, `A step of run #${input.id}`)
     if (!decision.go) return { dryRun: true, ...remaining(run) }
     return summarizeRun(await client.runs.runStep(input.id, input.stepId))
@@ -316,8 +376,9 @@ export const runStepRetry = defineCommand({
     const step = run.steps.find((s) => s.id === input.stepId)
     if (!step) throw new ZettaError({ code: 'NOT_FOUND', message: `Run #${input.id} has no step ${input.stepId}.`, status: 404 })
     let body: { settings?: Record<string, unknown>; request?: Record<string, unknown> } = {}
+    if (step.status !== 'failed') throw usageError(`Step ${input.stepId} (${step.nodeId}) is ${step.status}; only a failed step can be retried.`)
     if (input.set?.length) {
-      const fields = Object.fromEntries(input.set.map((pair) => [pair.slice(0, pair.indexOf('=')), pair.slice(pair.indexOf('=') + 1)]))
+      const fields = setPairs(input.set)
       const change = P.runNodeChange(P.parseGraph(run.graph), step.nodeId, fields)
       if (!change.ok) throw new ZettaError({ code: 'USAGE', message: change.problems.map((p) => p.message).join(' '), details: { problems: change.problems } })
       body = change.body
@@ -341,18 +402,19 @@ export const runConfirmParts = defineCommand({
   input: z.object({
     id: runId,
     stepId: z.number().int().positive().describe('The Isolate Parts step’s numeric id.'),
-    keys: z.array(z.string()).min(1).describe('Part keys to keep (shown in the step’s review).'),
-    extra: z.array(z.string()).optional().describe('Extra parts to ask for, by name.'),
+    keys: z.array(z.string().max(P.PIPELINE_LIMITS.maxPartLabel)).max(P.PIPELINE_LIMITS.maxParts).optional().describe('Part keys to keep (shown in the step’s review), at most 16.'),
+    extra: z.array(z.string().max(P.PIPELINE_LIMITS.maxPartLabel)).max(P.PIPELINE_LIMITS.maxParts).optional().describe('Extra parts to ask for, by name (at most 16, 80 characters each).'),
   }),
   async run(ctx, input) {
-    return summarizeRun(await (await ctx.client()).runs.confirmParts(input.id, input.stepId, { keys: input.keys, ...(input.extra?.length ? { extraParts: input.extra } : {}) }))
+    if (!input.keys?.length && !input.extra?.length) throw usageError('Choose at least one part (--keys), or name one (--extra).')
+    return summarizeRun(await (await ctx.client()).runs.confirmParts(input.id, input.stepId, { keys: input.keys ?? [], ...(input.extra?.length ? { extraParts: input.extra } : {}) }))
   },
   text: renderRun,
 })
 
 export const runDelete = defineCommand({
   path: ['run', 'delete'],
-  summary: 'Delete a run record (its models stay in your library).',
+  summary: 'Delete a finished, cancelled or draft run (its models stay in your library).',
   kind: 'destructive',
   positionals: [{ name: 'id', required: true }],
   input: z.object({ id: runId, yes: z.boolean().optional().describe('Delete without asking.') }),
@@ -360,7 +422,12 @@ export const runDelete = defineCommand({
     if (!input.yes && !(ctx.interactive && (await ctx.confirm(`Delete run #${input.id}?`)))) {
       throw usageError(ctx.interactive ? 'Cancelled.' : 'Pass --yes to delete without a terminal.')
     }
-    await (await ctx.client()).runs.delete(input.id)
+    const client = await ctx.client()
+    const run = await client.runs.get(input.id)
+    if (['running', 'awaiting', 'paused'].includes(run.status)) {
+      throw usageError(`Run #${input.id} is still going — cancel it first (zetta run cancel ${input.id}), then delete it.`)
+    }
+    await client.runs.delete(input.id)
     return { deleted: input.id }
   },
   text: (r: { deleted: number }) => `Deleted run #${r.deleted}.`,

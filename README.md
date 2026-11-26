@@ -10,7 +10,7 @@
   <a href="docs/installation.md"><img alt="One-line install, no dependencies" src="https://img.shields.io/badge/install-one%20line%2C%20no%20dependencies-15130F?style=flat-square"></a>
   <a href="docs/ai-agents.md"><img alt="MCP server included" src="https://img.shields.io/badge/MCP-server%20included-1677FF?style=flat-square"></a>
   <a href="docs/ai-agents.md"><img alt="Built for AI agents" src="https://img.shields.io/badge/built%20for-AI%20agents-1677FF?style=flat-square"></a>
-  <a href="docs/COMMANDS.md"><img alt="96 commands" src="https://img.shields.io/badge/commands-96-55514A?style=flat-square"></a>
+  <a href="docs/COMMANDS.md"><img alt="108 commands" src="https://img.shields.io/badge/commands-108-55514A?style=flat-square"></a>
 </p>
 
 <p align="center">
@@ -110,14 +110,13 @@ zetta auth login                          # opens zetta3d.ai in your browser; cl
 
 | Where you are | How to sign in |
 |---|---|
-| A laptop with a browser | `zetta auth login` |
-| SSH, a container, no browser | `zetta auth login --email you@example.com` — paste the link from the email (copy it; don't click it) |
-| CI, scripts, agents | Set `ZETTA_TOKEN`. Copy the value with `zetta auth token` on a machine where you are signed in |
+| A computer with a browser | `zetta auth login` (the installer starts it for you) |
+| SSH, a container, a server, CI, scripts, agents | An API key: make one on zetta3d.ai (Profile › API keys) or with `zetta apikey create <name>` where you are signed in, then set `ZETTA_API_KEY` or run `zetta auth login --api-key` |
 
-Where the token is kept:
-- **Storage:** in the system keychain (macOS Keychain, Windows Credential Manager or libsecret). Where there is none, it goes in a `0600` file instead.
-- **Check it:** `zetta auth status` shows who you are and when the token expires.
-- **Treat it like a password.** Tokens last 30 days and cannot be revoked yet.
+Where the sign-in is kept:
+- **Storage:** in the system keychain (macOS Keychain, Windows Credential Manager or libsecret). Where there is none, it goes in a `0600` file instead. `ZETTA_API_KEY` is never stored, and wins over it.
+- **Check it:** `zetta auth status` shows who you are, whether you use a session token or an API key, and when a token expires.
+- **Accounts connect only through the browser.** The browser sign-in lasts 30 days. API keys (`zk_live_…`) are made from a signed-in account, last until you revoke them with `zetta apikey revoke <id>`, and can't manage keys, billing or the account.
 
 See [docs/authentication.md](docs/authentication.md).
 
@@ -125,9 +124,14 @@ See [docs/authentication.md](docs/authentication.md).
 
 ```bash
 # What do I have?
+zetta account show                        # plan, trial and balances
 zetta account credits                     # 3D credits (1 credit = €0.01) and AI tokens
 zetta catalog entitlements                # what your plan allows
 zetta catalog engines                     # engines and their limits
+
+# No plan yet? There is no free tier
+zetta billing plans                       # plans, credit packs and Agent plans
+zetta account redeem ZETTA-7KQ2-M9XD      # a trial code: 10 days of the Basic plan
 
 # A model from a picture: price it, then make it and download it
 zetta generate --image chair.png --engine n2.5 --dry-run
@@ -144,8 +148,14 @@ zetta asset download 1234 --format glb --out ./models
 zetta refine retopo 1234 --faces 5000 --yes --wait
 zetta refine rig 1235 --rig-type biped --rig-format fbx --yes --out ./models
 
+# AI PBR maps from the texture, put on the model and saved over it (can't be undone)
+zetta asset texture-map 1234 --map normal,roughness,metalness --apply
+
 # Free local conversion
 zetta asset export 1234 --format stl --out ./print
+
+# An API key for CI (shown once)
+zetta apikey create ci
 
 # Pictures
 zetta image generate -p "a brass desk lamp, studio light" --for-3d --out ./refs
@@ -161,13 +171,12 @@ The full walkthrough is in [docs/getting-started.md](docs/getting-started.md), a
 
 | Engine | What it is for | Plans |
 |---|---|---|
-| `n1` | Text, a picture or several views to 3D | All |
-| `n2.5` | Picture or several views to 3D; parts, quads, Ultra detail | Paid |
-| `np1`, `np1.5` | Smart 3D; up to 8K textures | Paid |
+| `n2.5` (default) | Text, a picture or several views to 3D; parts, quads, Ultra detail | Paid |
+| `np1`, `np1.5` | Smart 3D: clean topology to a polygon budget; up to 8K textures | Paid |
 | `r1` | Retopology | Paid |
 | `splat`, `splat2`, `splat2.1` | Gaussian-splat objects and worlds | Early access |
 
-`zetta catalog engines` lists what each one supports.
+`zetta catalog engines` lists what each one supports. There is no free tier: every engine needs a plan (`zetta billing plans`) or a trial code (`zetta account redeem <code>`). N1 is retired.
 
 **Credits and the spend guard.** Paid commands always check the price first.
 - `--dry-run` shows the price and spends nothing.
@@ -207,17 +216,19 @@ Models can be an asset id, a local `.glb` file, or a URL. The CLI uploads local 
 ```bash
 zetta setup claude-code --budget 500      # skill + MCP server for Claude Code
 zetta setup claude-desktop                # MCP server for Claude Desktop
-zetta setup cursor                        # MCP server for Cursor
-zetta setup codex                         # MCP server + guide for Codex
+zetta setup cursor                        # skill + MCP server for Cursor
+zetta setup codex                         # skill + MCP server for Codex
 zetta setup agents-md                     # guide in ./AGENTS.md for any agent
-zetta skill install                       # just the skill (~/.claude/skills/zetta3d)
+zetta skill status                        # where the skill is installed
 ```
 
-**MCP:** `zetta mcp` serves every command as an MCP tool, with the same checks.
+**The skill installs itself.** The installer puts the Zetta 3D skill where Claude Code, Codex and Cursor look for skills, for every one of them it finds. Each newer `zetta` keeps it current. `zetta skill uninstall` removes it for good, and `ZETTA_NO_SKILL=1` skips it for one install.
+
+**MCP:** `zetta mcp` serves the commands as MCP tools, with the same checks. Sign-in, config, `apikey create` and `billing agent-plan` stay in the terminal.
 - `--budget N` caps what a session may spend.
 - `--read-only` offers only tools that never change anything.
 
-The full agent guide is printed by `zetta guide`, and lives in [docs/ai-agents.md](docs/ai-agents.md) and [skill/SKILL.md](skill/SKILL.md).
+The full agent guide is printed by `zetta guide`, and lives in [docs/ai-agents.md](docs/ai-agents.md) and [skill/zetta3d/SKILL.md](skill/zetta3d/SKILL.md).
 
 ## Pipelines
 
@@ -248,7 +259,7 @@ zetta config add-profile staging --api https://staging-api.example.com/api --sit
 ```
 
 **Environment variables:**
-- `ZETTA_TOKEN`, `ZETTA_PROFILE`, `ZETTA_API_URL`, `ZETTA_SITE_URL`
+- `ZETTA_API_KEY`, `ZETTA_PROFILE`, `ZETTA_API_URL`, `ZETTA_SITE_URL`
 - `ZETTA_OUTPUT`, `ZETTA_CONFIG_DIR`
 - `ZETTA_NO_KEYCHAIN=1`, `ZETTA_NON_INTERACTIVE=1`, `ZETTA_NO_UPDATE_CHECK=1`
 - `NO_COLOR`
@@ -261,10 +272,10 @@ See [docs/configuration.md](docs/configuration.md).
 |---|---|
 | [Installation](docs/installation.md) | Every install method, updating, uninstalling, CI, Alpine and old CPUs |
 | [Getting started](docs/getting-started.md) | From sign-in to a downloaded model, step by step |
-| [Authentication](docs/authentication.md) | Sign-in methods, tokens, keychain, profiles, CI |
+| [Authentication](docs/authentication.md) | Sign-in methods, API keys, tokens, keychain, profiles, CI; plans, trials and billing |
 | [Generating models](docs/generating.md) | Text, picture and multi-view to 3D, every option, splat worlds |
 | [Refining models](docs/refining.md) | Retopology, segmentation, UVs, texturing, rigging, conversion, local export |
-| [Your library](docs/library.md) | Listing, waiting, downloading, sharing, tagging, importing, deleting |
+| [Your library](docs/library.md) | Listing, waiting, downloading, sharing, tagging, importing, saving back, AI texture maps, deleting |
 | [Images](docs/images.md) | Generating, editing and combining pictures; removing backgrounds |
 | [Pipelines](docs/pipelines.md) | Recipes in YAML, validating, pricing, running and batching |
 | [AI agents and MCP](docs/ai-agents.md) | The output contract, the spend guard, MCP, skills, setup per tool |
@@ -281,7 +292,8 @@ bun install
 bun run zetta -- --help        # run from source
 bun run check                  # typecheck, tests, lint
 bun run build                  # a binary for this machine → release/<platform>/ (or: bun run build windows, all, …)
-bun run docs:commands          # regenerate docs/COMMANDS.md and skill/SKILL.md
+bun run release patch          # build every platform, check it, publish it to Spaces (docs/releasing.md)
+bun run docs:commands          # regenerate docs/COMMANDS.md and the agent skill (skill/zetta3d/)
 ```
 
 Architecture, testing, the live smoke test and agent evals are in [docs/development.md](docs/development.md). Releases are in [docs/releasing.md](docs/releasing.md).

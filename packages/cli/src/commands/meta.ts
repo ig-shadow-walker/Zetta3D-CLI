@@ -1,11 +1,18 @@
+import { join } from 'node:path'
 import { z } from 'zod'
 import { tokenExpiry } from '@zetta3d/sdk'
-import { USER_AGENT } from '../core/context'
+import { USER_AGENT, type Context } from '../core/context'
 import { defineCommand, fieldsOf, inputJsonSchema, kebab, type AnyCommand } from '../core/define'
 import { usageError } from '../core/errors'
 import { EXIT_CODE_TABLE } from '../core/exit-codes'
 import { table } from '../core/output'
-import { AGENT_GUIDE } from '../guide'
+import { homeDir } from '../core/paths'
+import { guideText, guideTopic, SKILL_NAME } from '../guide'
+import { skillFiles } from '../skill/bundle'
+import { AGENT_LABEL, detectAgents, installedVersion, servedBy, skillsFolder } from '../skill/install'
+import { SKILL_REFERENCES } from '../skill/sources'
+import { compareVersions, fetchLatest, upgradeCommand } from '../upgrade'
+import { rememberLatest } from '../update-notice'
 import { VERSION } from '../version'
 
 /** Filled in by the registry, so these commands can describe all the others. */
@@ -72,13 +79,46 @@ export const schemaCommand = defineCommand({
   text: (r: { inputSchema: unknown }) => JSON.stringify(r.inputSchema, null, 2),
 })
 
+const GUIDE_TOPICS = SKILL_REFERENCES.map((r) => guideTopic(r.file)) as [string, ...string[]]
+
+/** Whether a newer zetta is out (one small request; remembered for the update notice). */
+async function updateCheck(ctx: Context): Promise<Check> {
+  try {
+    const latest = await Promise.race([fetchLatest(), new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timed out')), 5000))])
+    rememberLatest(ctx.env, latest.version)
+    return compareVersions(latest.version, VERSION) > 0
+      ? { check: 'update', ok: false, detail: `zetta ${latest.version} is out (this is ${VERSION}). Update with: ${upgradeCommand()}` }
+      : { check: 'update', ok: true, detail: `up to date (${VERSION} is the latest)` }
+  } catch (error) {
+    return { check: 'update', ok: true, detail: `could not check for a newer version (${error instanceof Error ? error.message : String(error)})` }
+  }
+}
+
+/** Whether the agent skill is installed for the agents on this machine, and current. */
+function skillCheck(ctx: Context): Check {
+  const home = homeDir(ctx.env)
+  const found = detectAgents(ctx.env)
+  const installed = (['claude', 'agents'] as const)
+    .map((target) => ({ target, version: installedVersion(join(skillsFolder(home, target), SKILL_NAME)) }))
+    .filter((place) => place.version !== undefined)
+  const stale = installed.filter((place) => place.version !== VERSION)
+  if (stale.length) return { check: 'agent skill', ok: false, detail: `An older version is installed for ${stale.map((p) => servedBy(p.target)).join(', ')}. Run \`zetta skill install\`.` }
+  if (installed.length) return { check: 'agent skill', ok: true, detail: `installed for ${installed.map((p) => servedBy(p.target, found.length ? found : undefined)).join(', ')} (${VERSION})` }
+  return { check: 'agent skill', ok: true, detail: found.length ? `not installed; \`zetta skill install\` teaches ${found.map((a) => AGENT_LABEL[a]).join(', ')} to use zetta` : 'not installed (no Claude Code, Codex or Cursor found)' }
+}
+
 export const guideCommand = defineCommand({
   path: ['guide'],
   summary: 'How to use this CLI well — written for AI agents (and handy for people).',
+  description: `With a topic, prints that part of the documentation: ${GUIDE_TOPICS.join(', ')}. The agent skill carries the same files (zetta skill install).`,
   kind: 'local',
-  input: z.object({}),
-  async run() {
-    return { guide: AGENT_GUIDE }
+  positionals: [{ name: 'topic' }],
+  input: z.object({ topic: z.enum(GUIDE_TOPICS).optional().describe('One area in depth.') }),
+  examples: ['zetta guide', 'zetta guide pipelines', 'zetta guide errors'],
+  async run(_ctx, input) {
+    if (!input.topic) return { guide: guideText() }
+    const files = await skillFiles()
+    return { topic: input.topic, guide: files[`references/${input.topic}.md`]! }
   },
   text: (r: { guide: string }) => r.guide,
 })
@@ -129,7 +169,7 @@ export const doctorCommand = defineCommand({
     }
 
     const stored = await ctx.storedCredential()
-    if (!stored) checks.push({ check: 'sign-in', ok: false, detail: 'Not signed in. Run `zetta auth login` or set ZETTA_TOKEN.' })
+    if (!stored) checks.push({ check: 'sign-in', ok: false, detail: 'Not signed in. Run `zetta auth login` (browser), or set ZETTA_API_KEY for scripts and CI.' })
     else {
       const expiry = stored.credential.expiresAt ? new Date(stored.credential.expiresAt) : tokenExpiry(stored.credential.token)
       try {
@@ -154,6 +194,8 @@ export const doctorCommand = defineCommand({
       }
     }
     checks.push({ check: 'keychain', ok: true, detail: keychain ? 'system keychain available' : 'no system keychain here; tokens go to the credentials file (0600)' })
+    checks.push(skillCheck(ctx))
+    checks.push(await updateCheck(ctx))
     const failing = checks.filter((c) => !c.ok)
     return { ok: failing.length === 0, checks, ...(failing.length ? { exitCode: 1 } : {}) }
   },

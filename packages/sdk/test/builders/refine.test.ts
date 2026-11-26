@@ -30,7 +30,7 @@ const POST = { sourcePostId: 5 }
 const REF = 'https://cdn.example.com/ref.png'
 
 describe('retopo', () => {
-  it('sends the R1 defaults: an exact budget of 8,000 triangles, baking left on', () => {
+  it('sends the Studio’s defaults: Zetta R1, an exact budget of 8,000 triangles, baking left on', () => {
     const result = ok('retopo', POST)
     expect(result.request).toEqual({
       spec: { postProcess: ['smart_topology'] },
@@ -43,56 +43,44 @@ describe('retopo', () => {
     expect(result.quote).toEqual({ postProcess: ['smart_topology'], model: 'r1' })
   })
 
-  it('sends a level, not a count, on N1', () => {
-    expect(ok('retopo', { ...POST, engine: 'n1' }).request).toEqual({
-      spec: { postProcess: ['smart_topology'] },
-      sourcePostId: 5,
-      model: 'n1',
-      faceLevel: 'medium',
-      polygonType: 'triangle',
-      origin: 'cli',
-    })
+  it('refuses the retired Zetta N1, by name', () => {
+    const result = buildRefineRequest('retopo', { ...POST, engine: 'n1' as never })
+    expect(!result.ok && result.problems.map((p) => p.code)).toEqual(['ENGINE_RETIRED'])
+    expect(!result.ok && result.problems[0]?.message).toMatch(/Zetta N1 has been retired\. Retopology runs on Zetta R1\./)
+    expect(codes('retopo', { ...POST, engine: 'r1' })).toEqual([])
   })
 
-  it('halves the R1 ceiling for quads', () => {
+  it('refuses the retired face level, saying what to use instead', () => {
+    const result = buildRefineRequest('retopo', { ...POST, faceLevel: 'low' } as RefineInput<'retopo'>)
+    expect(!result.ok && result.problems.map((p) => p.code)).toEqual(['OPTION_RETIRED'])
+    expect(!result.ok && result.problems[0]?.message).toMatch(/Set faces/)
+  })
+
+  it('halves the ceiling for quads', () => {
     expect(codes('retopo', { ...POST, faces: 20_000 })).toEqual([])
     expect(codes('retopo', { ...POST, faces: 20_001 })).toEqual(['OUT_OF_RANGE'])
     expect(codes('retopo', { ...POST, faces: 10_000, polygonType: 'quad' })).toEqual([])
     expect(codes('retopo', { ...POST, faces: 10_001, polygonType: 'quad' })).toEqual(['OUT_OF_RANGE'])
     expect(codes('retopo', { ...POST, faces: 499 })).toEqual(['OUT_OF_RANGE'])
+    expect(codes('retopo', { ...POST, faces: 500, polygonType: 'quad' })).toEqual([])
   })
 
-  it('refuses R1-only options on N1', () => {
-    expect(codes('retopo', { ...POST, engine: 'n1', faces: 5_000 })).toEqual(['OPTION_NOT_APPLICABLE'])
-    expect(codes('retopo', { ...POST, engine: 'n1', bake: false })).toEqual(['OPTION_NOT_APPLICABLE'])
-    expect(codes('retopo', { ...POST, engine: 'n1', partNames: ['arm'] })).toEqual(['OPTION_NOT_APPLICABLE'])
-  })
-
-  it('sends bake only as false, and part names on R1', () => {
+  it('sends bake only as false, unwrapUvs only as true, and part names', () => {
     expect(ok('retopo', { ...POST, bake: false }).request.bake).toBe(false)
     expect(ok('retopo', { ...POST, bake: true }).request).not.toHaveProperty('bake')
+    expect(ok('retopo', { ...POST, unwrapUvs: true }).request.unwrapUvs).toBe(true)
+    expect(ok('retopo', { ...POST, unwrapUvs: false }).request).not.toHaveProperty('unwrapUvs')
     expect(ok('retopo', { ...POST, partNames: [' arm ', ''] }).request.partNames).toEqual(['arm'])
   })
 
-  it('takes a level on R1 in place of a count, but not both', () => {
-    const request = ok('retopo', { ...POST, faceLevel: 'low' }).request
-    expect(request.faceLevel).toBe('low')
-    expect(request).not.toHaveProperty('faceCount')
-    expect(codes('retopo', { ...POST, faceLevel: 'low', faces: 5_000 })).toEqual(['FACES_AND_LEVEL'])
+  it('reads GLB, OBJ and FBX', () => {
+    expect(acceptedFormats('retopo')).toEqual(['GLB', 'OBJ', 'FBX'])
+    expect(codes('retopo', { sourceFileUrl: 'https://cdn.example.com/mesh.fbx' })).toEqual([])
   })
 
-  it('reads FBX on R1 but not on N1', () => {
-    const url = 'https://cdn.example.com/mesh.fbx'
-    expect(codes('retopo', { sourceFileUrl: url })).toEqual([])
-    const result = buildRefineRequest('retopo', { sourceFileUrl: url, engine: 'n1' })
-    expect(!result.ok && result.problems.map((p) => p.code)).toEqual(['SOURCE_FORMAT_NOT_ACCEPTED'])
-    expect(!result.ok && result.problems[0]?.message).toMatch(/needs a GLB or OBJ mesh.*Convert it to OBJ/)
-  })
-
-  it('has no size ceiling on N1, 150MB on R1', () => {
-    const big = 200 * 1024 * 1024
-    expect(codes('retopo', { ...POST, engine: 'n1', sourceBytes: big })).toEqual([])
-    expect(codes('retopo', { ...POST, sourceBytes: big })).toEqual(['SOURCE_TOO_LARGE'])
+  it('takes a source up to 150MB', () => {
+    expect(codes('retopo', { ...POST, sourceBytes: 150 * 1024 * 1024 })).toEqual([])
+    expect(codes('retopo', { ...POST, sourceBytes: 200 * 1024 * 1024 })).toEqual(['SOURCE_TOO_LARGE'])
   })
 })
 
@@ -126,16 +114,23 @@ describe('segment', () => {
 })
 
 describe('uv', () => {
-  it('sends nothing for the defaults', () => {
-    expect(ok('uv', POST).request).toEqual({ spec: { postProcess: ['smart_uv'] }, sourcePostId: 5, origin: 'cli' })
+  it('sends bare UVs by default, as the Studio does', () => {
+    expect(ok('uv', POST).request).toEqual({ spec: { postProcess: ['smart_uv'] }, sourcePostId: 5, bake: false, origin: 'cli' })
   })
 
-  it('sends each change from the default', () => {
-    expect(ok('uv', { ...POST, bake: false, exportOrientation: '+y', compressGeometry: true }).request).toMatchObject({
+  it('re-bakes the textures only when asked, and sends nothing for it', () => {
+    expect(ok('uv', { ...POST, bake: true }).request).not.toHaveProperty('bake')
+  })
+
+  it('sends each other change from the default', () => {
+    expect(ok('uv', { ...POST, exportOrientation: '+y', compressGeometry: true }).request).toMatchObject({
       bake: false,
       exportOrientation: '+y',
       compressGeometry: true,
     })
+    for (const orientation of ['+x', '-x', '+y', '-y'] as const) {
+      expect(ok('uv', { ...POST, exportOrientation: orientation }).request.exportOrientation).toBe(orientation)
+    }
     expect(ok('uv', { ...POST, exportOrientation: 'as-is' }).request).not.toHaveProperty('exportOrientation')
   })
 
@@ -180,9 +175,24 @@ describe('texture', () => {
     expect(codes('texture', POST)).toEqual(['REFERENCE_REQUIRED'])
   })
 
-  /* The Studio sends views here; the server refuses them without a multi_view modifier. */
-  it('refuses reference views, which the server does not take on a retexture', () => {
-    expect(codes('texture', { ...POST, views: { front: REF, left: REF } })).toEqual(['TEXTURE_VIEWS_NOT_ACCEPTED'])
+  it('paints from reference views, front first, with no multi_view charge', () => {
+    const views = { left: 'https://cdn.example.com/l.png', front: REF, right: 'https://cdn.example.com/r.png' }
+    const result = ok('texture', { ...POST, views })
+    expect(result.request.multiViewImages).toEqual([
+      { viewType: 'front', imageUrl: REF },
+      { viewType: 'left', imageUrl: views.left },
+      { viewType: 'right', imageUrl: views.right },
+    ])
+    expect(result.request).not.toHaveProperty('imageUrl')
+    expect(result.request.spec).toEqual({ postProcess: ['retexture'] })
+    expect(ok('texture', { ...POST, views: { front: REF } }).request.multiViewImages).toHaveLength(1)
+  })
+
+  it('needs the front view, and one reference kind only', () => {
+    expect(codes('texture', { ...POST, views: { left: REF, back: REF } })).toEqual(['FRONT_VIEW_REQUIRED'])
+    expect(codes('texture', { ...POST, imageUrl: REF, views: { front: REF } })).toEqual(['IMAGE_WITH_VIEWS'])
+    expect(codes('texture', { ...POST, views: { front: REF, top: REF } as never })).toEqual(['VIEW_NOT_SUPPORTED'])
+    expect(codes('texture', { ...POST, views: { front: 'cdn.example.com/f.png' } })).toEqual(['INVALID_URL'])
   })
 })
 
@@ -191,16 +201,28 @@ describe('rig', () => {
     expect(ok('rig', POST).request).toEqual({ spec: { postProcess: ['auto_rigging'] }, sourcePostId: 5, origin: 'cli' })
   })
 
-  it('sends standard and mixamo in our own words, only when not the default', () => {
+  it('sends a skeleton naming in our own words, only when not the default', () => {
     expect(ok('rig', { ...POST, rigSpec: 'standard' }).request).not.toHaveProperty('rigSpec')
-    expect(ok('rig', { ...POST, rigSpec: 'mixamo' }).request.rigSpec).toBe('mixamo')
+    for (const rigSpec of ['mixamo', 'unity', 'unreal', 'vrm', 'actorcore'] as const) {
+      expect(ok('rig', { ...POST, rigSpec }).request.rigSpec).toBe(rigSpec)
+      expect(ok('rig', { ...POST, rigType: 'biped', rigSpec }).request.rigSpec).toBe(rigSpec)
+    }
+  })
+
+  it('names a skeleton for a humanoid only', () => {
+    expect(codes('rig', { ...POST, rigType: 'quadruped', rigSpec: 'mixamo' })).toEqual(['RIG_SPEC_NEEDS_BIPED'])
+    expect(ok('rig', { ...POST, rigType: 'quadruped', rigSpec: 'standard' }).request).not.toHaveProperty('rigSpec')
+  })
+
+  it('sends another body and the output format', () => {
     expect(ok('rig', { ...POST, rigType: 'quadruped', rigOutFormat: 'fbx' }).request).toMatchObject({
       rigType: 'quadruped',
       rigOutFormat: 'fbx',
     })
+    expect(ok('rig', { ...POST, rigType: 'others' }).request.rigType).toBe('others')
   })
 
-  it('refuses a naming it does not offer', () => {
+  it('refuses a naming it does not offer, the old vendor-named one included', () => {
     expect(codes('rig', { ...POST, rigSpec: 'legacy' as never })).toEqual(['INVALID_OPTION'])
   })
 })
@@ -259,9 +281,12 @@ describe('convert', () => {
     expect(result.quote.model).toBe('n25')
   })
 
-  it('bounds the polygon limit by topology', () => {
-    expect(codes('convert', { ...POST, outputFormat: 'OBJ', faceLimit: 3_000 })).toEqual(['OUT_OF_RANGE'])
-    expect(ok('convert', { ...POST, outputFormat: 'OBJ', faceLimit: 5_000 }).request.faceCount).toBe(5_000)
+  it('bounds the polygon limit as the default engine’s High rung, by topology', () => {
+    expect(codes('convert', { ...POST, outputFormat: 'OBJ', faceLimit: 999 })).toEqual(['OUT_OF_RANGE'])
+    expect(ok('convert', { ...POST, outputFormat: 'OBJ', faceLimit: 1_000 }).request.faceCount).toBe(1_000)
+    expect(ok('convert', { ...POST, outputFormat: 'OBJ', faceLimit: 1_000_000 }).request.faceCount).toBe(1_000_000)
+    expect(codes('convert', { ...POST, outputFormat: 'OBJ', faceLimit: 1_000_001 })).toEqual(['OUT_OF_RANGE'])
+    expect(codes('convert', { ...POST, outputFormat: 'FBX', quad: true, faceLimit: 150_000 })).toEqual([])
     expect(codes('convert', { ...POST, outputFormat: 'FBX', quad: true, faceLimit: 200_000 })).toEqual(['OUT_OF_RANGE'])
   })
 
@@ -315,24 +340,21 @@ describe('conversion and cost', () => {
   const prices = {
     items: [
       { code: 'smart_topology', credits: 38, model: 'r1' },
-      { code: 'smart_topology', credits: 85, model: 'n1' },
       { code: 'convert_format', credits: 5, model: null },
       { code: 'retexture', credits: 30, model: null },
     ],
   }
 
   it('says when a source has to be converted first', () => {
-    expect(needsConversion('retopo', ['FBX'], { engine: 'n1' })).toBe(true)
     expect(needsConversion('retopo', ['FBX'])).toBe(false)
-    expect(needsConversion('retopo', ['FBX', 'GLB'], { engine: 'n1' })).toBe(false)
     expect(needsConversion('segment', 'OBJ', { mode: 'smart' })).toBe(true)
+    expect(needsConversion('segment', ['OBJ', 'GLB'], { mode: 'smart' })).toBe(false)
     expect(needsConversion('rig', [])).toBe(false)
   })
 
-  it('prices per engine, with the conversion added when needed', () => {
+  it('prices retopology on R1, with the conversion added when needed', () => {
     expect(costOf('retopo', prices, {}, ['GLB'])).toBe(38)
-    expect(costOf('retopo', prices, { engine: 'n1' }, ['GLB'])).toBe(85)
-    expect(costOf('retopo', prices, { engine: 'n1' }, ['FBX'])).toBe(90)
+    expect(costOf('segment', { items: [...prices.items, { code: 'smart_segmentation', credits: 55, model: null }] }, { mode: 'smart' }, ['OBJ'])).toBe(60)
     expect(costOf('texture', prices, {}, ['GLB'])).toBe(30)
     expect(costOf('rig', prices)).toBeNull()
     expect(costOf('retopo', undefined)).toBeNull()
@@ -353,7 +375,7 @@ describe('the catalogue', () => {
       expect(tool.description).toBeTruthy()
       for (const option of tool.options) {
         expect(option.description).toBeTruthy()
-        if (option.type === 'enum') {
+        if (option.type === 'enum' || option.type === 'views') {
           expect(option.values?.length).toBeGreaterThan(0)
           if (option.default !== undefined) expect(option.values).toContain(option.default)
         }

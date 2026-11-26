@@ -9,6 +9,7 @@ export {
   LEGACY_NODE_KINDS,
   isNodeKind,
   isSeed,
+  isMultiViewGenerate,
   outputType,
   inputPort,
   settingSpec,
@@ -32,13 +33,17 @@ export {
   RIG_SPEC_REPLACED_MESSAGE,
   type SettingNote,
 } from './settings'
-export { requestFor, withRequests, nodeProblems, incomingType, INPUT_PLACEHOLDER, type NodeContext } from './request'
+export { requestFor, withRequests, nodeProblems, incomingType, viewsRequest, INPUT_PLACEHOLDER, type NodeContext } from './request'
 export {
   validateGraph,
   graphWarnings,
   checkGraph,
   runInputProblems,
   setOnEachRun,
+  perRunIn,
+  hasFront,
+  mismatchMessage,
+  withMultiViewSteps,
   topologicalOrder,
   stepPositions,
   fanOutNodes,
@@ -53,7 +58,7 @@ export {
   WARNING_CODES,
   type ValidateOptions,
 } from './rules'
-export { forNewRun, withoutRunInput, newRunGraph, normalizeGraph } from './runs'
+export { forNewRun, withoutRunInput, newRunGraph, normalizeGraph, runGraphFor, serverRunCopy, runGraphChanges } from './runs'
 export {
   compilePipeline,
   decompilePipeline,
