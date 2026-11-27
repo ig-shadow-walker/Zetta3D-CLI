@@ -105,7 +105,7 @@ export const SKILL_NAME = 'zetta3d'
 export const SKILL_DESCRIPTION =
   'Make, change and manage 3D models with the Zetta 3D CLI (zetta) — text or pictures to 3D, retopology, segmentation, UVs, texturing, rigging, format conversion, pictures and PBR texture maps, Gaussian-splat worlds, multi-step pipelines and batches, and the Zetta 3D library, credits, plan and API keys. Use when the user wants a 3D asset made, edited, downloaded, imported or exported, mentions Zetta 3D or zetta, or asks about their Zetta 3D account.'
 
-const COMPATIBILITY = 'Needs the zetta command-line tool (curl -fsSL https://zetta3d.ai/install.sh | sh, which also installs this skill).'
+const COMPATIBILITY = 'Needs the zetta command-line tool (curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh, which also installs this skill).'
 
 /** A reference topic name, as `zetta guide <topic>` takes it: the file name without .md. */
 export const guideTopic = (file: string) => file.replace(/\.md$/, '')

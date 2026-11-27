@@ -84,8 +84,8 @@ describe('bun run release', () => {
   it('writes release notes with the install lines and the changes, leaving out any line naming a vendor', () => {
     const vendor = buildMatchers(['acmevendor']).text
     const notes = releaseNotes('0.2.0', ['Faster uploads', 'Switch to AcmeVendor v3'], vendor)
-    expect(notes).toContain('curl -fsSL https://zetta3d.ai/install.sh | sh')
-    expect(notes).toContain('irm https://zetta3d.ai/install.ps1 | iex')
+    expect(notes).toContain('curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh')
+    expect(notes).toContain('irm https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.ps1 | iex')
     expect(notes).toContain('- Faster uploads')
     expect(notes).not.toMatch(/acmevendor/i)
     expect(releaseNotes('0.1.0', [])).toContain('First release')

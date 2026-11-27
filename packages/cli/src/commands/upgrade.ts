@@ -24,7 +24,7 @@ export const upgradeCommand = defineCommand({
       return { current: VERSION, latest: latest.version, updateAvailable: newer, ...(newer ? { upgradeWith: upgradeWith() } : {}) }
     }
     if (!isCompiledBinary()) {
-      return { current: VERSION, upgraded: false, note: 'Running from source; update with git pull (or reinstall: curl -fsSL https://zetta3d.ai/install.sh | sh).' }
+      return { current: VERSION, upgraded: false, note: 'Running from source; update with git pull (or reinstall: curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh).' }
     }
     const result = await upgradeSelf({
       ...(input.to ? { version: input.to } : {}),

@@ -5,7 +5,8 @@ From installing to a downloaded 3D model, in about five minutes.
 ## 1. Install and check
 
 ```bash
-curl -fsSL https://zetta3d.ai/install.sh | sh       # Windows: irm https://zetta3d.ai/install.ps1 | iex
+# macOS and Linux (on Windows, in PowerShell: irm https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.ps1 | iex)
+curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh
 zetta --version
 zetta doctor
 ```

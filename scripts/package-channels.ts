@@ -167,7 +167,7 @@ let binary
 try {
   binary = require.resolve(\`@zetta3d/cli-\${key}/bin/zetta\${os === 'windows' ? '.exe' : ''}\`)
 } catch {
-  console.error(\`zetta: no binary for \${key}. Reinstall @zetta3d/cli, or use the installer: curl -fsSL https://zetta3d.ai/install.sh | sh\`)
+  console.error(\`zetta: no binary for \${key}. Reinstall @zetta3d/cli, or use the installer: curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh\`)
   process.exit(1)
 }
 const result = spawnSync(binary, process.argv.slice(2), { stdio: 'inherit' })
@@ -194,7 +194,7 @@ try {
 )
 writeFileSync(
   join(main, 'README.md'),
-  `# @zetta3d/cli\n\nZetta 3D from the terminal. \`npx @zetta3d/cli --help\`, or \`npm i -g @zetta3d/cli\` then \`zetta --help\`.\n\nThe recommended install needs no Node at all: \`curl -fsSL https://zetta3d.ai/install.sh | sh\`. See https://zetta3d.ai for documentation.\n`,
+  `# @zetta3d/cli\n\nZetta 3D from the terminal. \`npx @zetta3d/cli --help\`, or \`npm i -g @zetta3d/cli\` then \`zetta --help\`.\n\nThe recommended install needs no Node at all: \`curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh\`. See https://zetta3d.ai for documentation.\n`,
 )
 
 console.log(`Homebrew: dist/homebrew/zetta.rb (${blocks.macos.length + blocks.linux.length} platforms)`)

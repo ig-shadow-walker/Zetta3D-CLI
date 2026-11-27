@@ -1,8 +1,8 @@
 #!/bin/sh
 # Zetta 3D CLI installer for macOS and Linux.
 #
-#   curl -fsSL https://zetta3d.ai/install.sh | sh
-#   wget -qO- https://zetta3d.ai/install.sh | sh        (systems without curl, e.g. Alpine)
+#   curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh
+#   wget -qO- https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh        (systems without curl, e.g. Alpine)
 #
 # Installs the single self-contained `zetta` binary into ~/.zetta/bin (no sudo, nothing else needed)
 # and adds that folder to PATH. Running it again upgrades in place.
@@ -148,7 +148,7 @@ detect_platform() {
 	Linux) z_os=linux ;;
 	MINGW* | MSYS* | CYGWIN* | Windows_NT)
 		err "this is the macOS/Linux installer. On Windows, run this in PowerShell instead:
-    irm https://zetta3d.ai/install.ps1 | iex"
+    irm https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.ps1 | iex"
 		;;
 	*) err "zetta does not support $z_uname_s. It runs on macOS, Linux and Windows." ;;
 	esac

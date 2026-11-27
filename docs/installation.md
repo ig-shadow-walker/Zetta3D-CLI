@@ -7,15 +7,15 @@
 **macOS and Linux**
 
 ```bash
-curl -fsSL https://zetta3d.ai/install.sh | sh
+curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh
 ```
 
-No `curl`? `wget -qO- https://zetta3d.ai/install.sh | sh` works too.
+No `curl`? `wget -qO- https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh` works too.
 
 **Windows** (PowerShell 5.1 or 7+)
 
 ```powershell
-irm https://zetta3d.ai/install.ps1 | iex
+irm https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.ps1 | iex
 ```
 
 What the installer does:
@@ -44,7 +44,7 @@ zetta doctor
 
 ### Installer options
 
-Set these in front of the command, e.g. `curl -fsSL https://zetta3d.ai/install.sh | ZETTA_VERSION=0.2.0 sh`.
+Set these in front of the command, e.g. `curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | ZETTA_VERSION=0.2.0 sh`.
 
 | Variable | Effect |
 |---|---|
@@ -54,7 +54,7 @@ Set these in front of the command, e.g. `curl -fsSL https://zetta3d.ai/install.s
 | `ZETTA_DOWNLOAD_BASE=https://…` | Download from somewhere other than the GitHub releases (mirrors, testing) |
 | `NO_COLOR=1` | No colour |
 
-On Windows, set them first: `$env:ZETTA_VERSION = '0.2.0'; irm https://zetta3d.ai/install.ps1 | iex`.
+On Windows, set them first: `$env:ZETTA_VERSION = '0.2.0'; irm https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.ps1 | iex`.
 
 ## Downloading a build yourself
 
@@ -103,7 +103,7 @@ Remove the agent skill too, before deleting the program: `zetta skill uninstall`
 
 ```yaml
 # GitHub Actions
-- run: curl -fsSL https://zetta3d.ai/install.sh | sh     # also adds zetta to $GITHUB_PATH
+- run: curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh     # also adds zetta to $GITHUB_PATH
 - run: zetta asset list
   env:
     ZETTA_API_KEY: ${{ secrets.ZETTA_API_KEY }}   # make one with `zetta apikey create ci`
@@ -114,7 +114,7 @@ Without a terminal the CLI never prompts. A paid command needs `--yes` or `--max
 In a Dockerfile:
 
 ```dockerfile
-RUN curl -fsSL https://zetta3d.ai/install.sh | ZETTA_INSTALL_DIR=/usr/local/bin ZETTA_NO_MODIFY_PATH=1 sh
+RUN curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | ZETTA_INSTALL_DIR=/usr/local/bin ZETTA_NO_MODIFY_PATH=1 sh
 ```
 
 ## Platform notes
@@ -133,6 +133,6 @@ RUN curl -fsSL https://zetta3d.ai/install.sh | ZETTA_INSTALL_DIR=/usr/local/bin 
 | `checksum mismatch` | The download was corrupted or tampered with; nothing was installed. Try again; if it persists, report it |
 | `does not run on this system` | Your platform is unsupported, or on Alpine `libstdc++` is missing (`apk add libstdc++`) |
 | `could not download` | Check your connection and any proxy (`HTTPS_PROXY` is honoured by curl and PowerShell) |
-| Windows: `running scripts is disabled` | Use `powershell -ExecutionPolicy Bypass -c "irm https://zetta3d.ai/install.ps1 \| iex"` |
+| Windows: `running scripts is disabled` | Use `powershell -ExecutionPolicy Bypass -c "irm https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.ps1 \| iex"` |
 
 For hosting the installers and binaries, see [releasing.md](releasing.md) and [install/README.md](../install/README.md).

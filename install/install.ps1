@@ -1,6 +1,6 @@
 # Zetta 3D CLI installer for Windows.
 #
-#   irm https://zetta3d.ai/install.ps1 | iex
+#   irm https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.ps1 | iex
 #
 # Installs the single self-contained zetta.exe into %LOCALAPPDATA%\zetta\bin (no admin rights,
 # nothing else needed) and adds that folder to your user PATH. Running it again upgrades in place.
@@ -121,7 +121,7 @@
 
     function Install-Zetta {
         if ($PSVersionTable.PSVersion.Major -ge 6 -and -not $IsWindows) {
-            Fail "this is the Windows installer. On macOS or Linux run: curl -fsSL https://zetta3d.ai/install.sh | sh"
+            Fail "this is the Windows installer. On macOS or Linux run: curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh"
         }
         # Windows PowerShell 5.1 may default to old TLS versions.
         try {

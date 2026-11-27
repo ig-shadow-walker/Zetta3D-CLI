@@ -3,11 +3,13 @@
 One command, nothing else installed first:
 
 ```sh
-curl -fsSL https://zetta3d.ai/install.sh | sh        # macOS, Linux (wget -qO- ... | sh works too)
+# macOS and Linux (wget -qO- … | sh works too)
+curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh
 ```
 
 ```powershell
-irm https://zetta3d.ai/install.ps1 | iex             # Windows (PowerShell 5.1 or 7+)
+# Windows (PowerShell 5.1 or 7+)
+irm https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.ps1 | iex
 ```
 
 The installer detects the OS and CPU, downloads the matching self-contained binary from the newest GitHub release, checks its SHA-256, test-runs it, and moves it into place atomically. It needs no sudo or admin rights. It then adds the folder to `PATH`, installs the agent skill and, in a terminal, starts the browser sign-in (`zetta auth login`). Running it again upgrades in place. `zetta upgrade` does the same from inside the CLI.
@@ -88,11 +90,11 @@ Keys are `<os>-<arch>[-musl][-baseline]`. `gz` is optional; without it clients d
 
 Any other `ZETTA_DOWNLOAD_BASE` (one that doesn't end in `/releases`) is read as a plain folder: `<base>/latest.json` and `<base>/v<version>/<file>`. That is for mirrors and local tests.
 
-### 2. `zetta3d.ai/install.sh` and `zetta3d.ai/install.ps1`
+### 2. The install lines
 
-- The website answers both with a `302` to the newest release's copy: `https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh` (and `install.ps1`). Its `CLI_DOWNLOAD_BASE` setting can send them elsewhere.
+- People install from the newest release's copy of each installer: `curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh` and `irm https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.ps1 | iex`. `latest/download/` always serves the newest stable release, so these lines never change.
 - The release uploads both as `text/plain`: with a binary content type, `irm … | iex` could get bytes instead of a script.
-- Without the website, the same lines work straight from GitHub: `curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh`.
+- Each release's installers point at the GitHub releases, so a pinned version (`ZETTA_VERSION`) installs from the same place.
 
 ### 3. Building and publishing a release
 

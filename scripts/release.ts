@@ -137,7 +137,7 @@ function vendorMatcher(): RegExp | undefined {
 }
 
 /** The release page's text: how to install or update, and what changed since the last release. */
-export function releaseNotes(version: string, changes: string[], vendor?: RegExp): string {
+export function releaseNotes(version: string, changes: string[], vendor?: RegExp, base: string = `https://github.com/${RELEASE_REPO}/releases`): string {
   const safe = vendor ? changes.filter((line) => scanText(line, vendor).length === 0) : changes
   return [
     '## Install',
@@ -145,13 +145,13 @@ export function releaseNotes(version: string, changes: string[], vendor?: RegExp
     'macOS and Linux:',
     '',
     '```sh',
-    'curl -fsSL https://zetta3d.ai/install.sh | sh',
+    `curl -fsSL ${latestUrl(base, 'install.sh')} | sh`,
     '```',
     '',
     'Windows (PowerShell):',
     '',
     '```powershell',
-    'irm https://zetta3d.ai/install.ps1 | iex',
+    `irm ${latestUrl(base, 'install.ps1')} | iex`,
     '```',
     '',
     `Already installed? Run \`zetta upgrade\`, or answer "yes" when zetta offers ${version}.`,
@@ -188,7 +188,7 @@ async function get(url: string, method: 'GET' | 'HEAD' = 'GET', redirect: Reques
 }
 
 /** Reads the release back the way installs and installed copies see it. */
-async function verify(base: string, version: string, files: string[], prerelease: boolean, isDefaultBase: boolean): Promise<boolean> {
+async function verify(base: string, version: string, files: string[], prerelease: boolean): Promise<boolean> {
   const results: Array<[boolean, string]> = []
   if (!prerelease) {
     const latest = await get(latestUrl(base, 'latest.json'))
@@ -213,15 +213,6 @@ async function verify(base: string, version: string, files: string[], prerelease
   results.push([missing.length === 0, missing.length ? `v${version} is missing ${missing.join(', ')}` : `v${version} has all ${files.length} files`])
   for (const [ok, line] of results) console.log(`  ${ok ? '✓' : '✗'} ${line}`)
 
-  // The website's one-line install should lead here. Not a failure: the website is deployed separately.
-  if (isDefaultBase && !prerelease) {
-    for (const script of ['install.sh', 'install.ps1']) {
-      const response = await get(`https://zetta3d.ai/${script}`, 'GET', 'manual')
-      const location = response?.headers.get('location') ?? ''
-      const ok = location === latestUrl(base, script)
-      console.log(`  ${ok ? '✓' : '!'} https://zetta3d.ai/${script} ${ok ? 'leads to this release' : `leads to ${location || 'nowhere'}: deploy the website (its server.mjs points the installers at ${latestUrl(base, '')})`}`)
-    }
-  }
   return results.every(([ok]) => ok)
 }
 
@@ -258,7 +249,7 @@ async function main(): Promise<void> {
     const versionDir = join(DIST, `v${version}`)
     const files = existsSync(versionDir) ? [...readdirSync(versionDir).filter((n) => keyFromBinaryName(n.replace(/\.gz$/, ''))), 'SHA256SUMS'] : ['SHA256SUMS']
     console.log(`Checking zetta ${version} at ${base}`)
-    const ok = await verify(base, version, files, version.includes('-'), base === defaultBase)
+    const ok = await verify(base, version, files, version.includes('-'))
     console.log(ok ? `\nzetta ${version} is live.` : '\nNot everything is right yet; fix the ✗ lines, then run this again.')
     process.exit(ok ? 0 : 1)
   }
@@ -374,7 +365,7 @@ async function main(): Promise<void> {
   console.log(`\n▸ Publish the GitHub release ${tag} (${assets.length} files)`)
   let release: GitHubRelease
   try {
-    release = (await github.releaseFor(tag)) ?? (await github.createDraft({ tag, name: `zetta ${version}`, body: releaseNotes(version, changes, vendorMatcher()), prerelease }))
+    release = (await github.releaseFor(tag)) ?? (await github.createDraft({ tag, name: `zetta ${version}`, body: releaseNotes(version, changes, vendorMatcher(), base), prerelease }))
     for (const asset of assets) {
       const size = asset.file ? statSync(asset.file).size : Buffer.byteLength(asset.text ?? '')
       const result = await github.upload(release, asset)
@@ -392,7 +383,7 @@ async function main(): Promise<void> {
   let ok = false
   for (let attempt = 1; attempt <= 5 && !ok; attempt++) {
     if (attempt > 1) await new Promise((r) => setTimeout(r, 3000))
-    ok = await verify(base, version, files, prerelease, base === defaultBase)
+    ok = await verify(base, version, files, prerelease)
   }
   if (!ok) fail(`the release is published, but not everything reads back right yet. Check again in a minute: bun run release --verify ${version}`)
   console.log(
@@ -403,8 +394,8 @@ async function main(): Promise<void> {
         ? `  It is a prerelease: install it with ZETTA_VERSION=${version}, or zetta upgrade --to ${version}.`
         : '  New installs get it now, and installed copies offer it within the hour.',
       '',
-      '  curl -fsSL https://zetta3d.ai/install.sh | sh     # macOS, Linux',
-      '  irm https://zetta3d.ai/install.ps1 | iex           # Windows',
+      `  macOS, Linux:  curl -fsSL ${latestUrl(base, 'install.sh')} | sh`,
+      `  Windows:       irm ${latestUrl(base, 'install.ps1')} | iex`,
     ].join('\n'),
   )
 }

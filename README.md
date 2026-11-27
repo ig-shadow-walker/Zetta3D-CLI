@@ -27,8 +27,11 @@
 **`zetta` is the command-line interface for [Zetta 3D](https://zetta3d.ai).** Turn text, a picture or a few views into a production-ready 3D model, refine it, and download it, all from your terminal. Everything you can do on the Zetta 3D website, you can script, automate, or hand to an AI agent.
 
 ```bash
-curl -fsSL https://zetta3d.ai/install.sh | sh                                   # install, then sign in with your browser
-zetta generate --image chair.png --max-credits 100 --out ./models                # a picture becomes a 3D model
+# Install, then sign in with your browser
+curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh
+
+# Turn a picture into a 3D model
+zetta generate --image chair.png --max-credits 100 --out ./models
 ```
 
 <p align="center">
@@ -63,13 +66,13 @@ zetta generate --image chair.png --max-credits 100 --out ./models               
 **macOS and Linux**
 
 ```bash
-curl -fsSL https://zetta3d.ai/install.sh | sh
+curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-irm https://zetta3d.ai/install.ps1 | iex
+irm https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.ps1 | iex
 ```
 
 The installer:
@@ -118,9 +121,14 @@ Each release lists the checksum of every file in `SHA256SUMS` (`shasum -a 256 -c
 <br>
 
 ```bash
-curl -fsSL https://zetta3d.ai/install.sh | ZETTA_VERSION=0.2.0 sh              # a specific version
-curl -fsSL https://zetta3d.ai/install.sh | ZETTA_INSTALL_DIR=/usr/local/bin sh   # another folder
-curl -fsSL https://zetta3d.ai/install.sh | ZETTA_NO_LOGIN=1 ZETTA_NO_SKILL=1 sh  # CI: no sign-in, no agent skill
+# A specific version
+curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | ZETTA_VERSION=0.2.0 sh
+
+# Another folder
+curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | ZETTA_INSTALL_DIR=/usr/local/bin sh
+
+# CI: no sign-in, no agent skill
+curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | ZETTA_NO_LOGIN=1 ZETTA_NO_SKILL=1 sh
 ```
 
 The installer never starts the browser sign-in without a person at the terminal, so it is safe in CI and Docker. See [docs/installation.md](docs/installation.md) for everything else.

@@ -57,7 +57,12 @@ How builds work:
 
    Pushing the release commit and tag uses your normal git sign-in.
 
-3. **The website.** `https://zetta3d.ai/install.sh` and `/install.ps1` redirect to the newest GitHub release (`Zetta3D-Frontend/server.mjs`), so the one-line install needs no setting. Deploy the website once after this change.
+3. **Nothing else.** People install straight from the newest GitHub release, so there is no download host to set up:
+
+   ```bash
+   curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh        # macOS, Linux
+   irm https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.ps1 | iex             # Windows
+   ```
 
 ## Cutting a release
 
@@ -78,7 +83,7 @@ It asks once, then does everything, stopping at the first failure:
 3. **Checks and builds everything:** typecheck, tests and lint; macOS, Linux and Windows, plus the builds for older x64 CPUs; the vendor-name scan; and the real installer, end to end. If anything fails, the version change is undone.
 4. **Commits** "Release v0.2.0", **tags** `v0.2.0`, and **pushes** both.
 5. **Publishes the GitHub release.** It creates a draft, uploads every file (each build and its `.gz` copy, `SHA256SUMS`, `latest.json`, and the two installers), then publishes it. The release page gets the install lines and the commits since the last release.
-6. **Reads it back** the way installs see it: the latest release is the new version, both installers point at it, and every file is there. It also checks that `zetta3d.ai/install.sh` leads to it.
+6. **Reads it back** the way installs see it: the latest release is the new version, both installers point at it, and every file is there.
 
 **Who hears about it:**
 - **New installs** get the new version straight away.
