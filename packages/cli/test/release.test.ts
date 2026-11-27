@@ -92,6 +92,8 @@ describe('bun run release', () => {
     expect(notes).toContain('curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh')
     expect(notes).toContain('irm https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.ps1 | iex')
     expect(notes).toContain('- Faster uploads')
+    expect(notes).toContain('`latest.json`: how installed copies learn that a new version is out')
+    expect(notes).not.toContain('.gz')
     expect(notes).not.toMatch(/acmevendor/i)
     expect(releaseNotes('0.1.0', [])).toContain('First release')
   })

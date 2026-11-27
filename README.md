@@ -63,19 +63,27 @@ zetta generate --image chair.png --max-credits 100 --out ./models
 
 ## Install
 
-**macOS and Linux**
+One command for your system installs zetta **and** its skill for AI coding agents (Claude Code, Codex, Cursor), then signs you in with your browser.
+
+**macOS**
 
 ```bash
 curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh
 ```
 
-**Windows (PowerShell)**
+**Linux**
+
+```bash
+curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh
+```
+
+**Windows** (PowerShell)
 
 ```powershell
 irm https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.ps1 | iex
 ```
 
-The installer:
+The command:
 1. picks the build for your computer: macOS (Apple Silicon or Intel), Linux (x64) or Windows (x64);
 2. checks the download against its published SHA-256 checksum;
 3. installs `zetta` into `~/.zetta/bin` (Windows: `%LOCALAPPDATA%\zetta\bin`), without sudo or admin rights, and adds it to your `PATH`;

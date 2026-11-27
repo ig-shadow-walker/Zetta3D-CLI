@@ -138,16 +138,25 @@ function vendorMatcher(): RegExp | undefined {
 /** The release page's text: how to install or update, and what changed since the last release. */
 export function releaseNotes(version: string, changes: string[], vendor?: RegExp, base: string = `https://github.com/${RELEASE_REPO}/releases`): string {
   const safe = vendor ? changes.filter((line) => scanText(line, vendor).length === 0) : changes
+  const sh = `curl -fsSL ${latestUrl(base, 'install.sh')} | sh`
   return [
     '## Install',
     '',
-    'macOS and Linux:',
+    'One command for your system installs zetta **and** its skill for AI coding agents (Claude Code, Codex, Cursor), then signs you in with your browser.',
+    '',
+    '**macOS**',
     '',
     '```sh',
-    `curl -fsSL ${latestUrl(base, 'install.sh')} | sh`,
+    sh,
     '```',
     '',
-    'Windows (PowerShell):',
+    '**Linux**',
+    '',
+    '```sh',
+    sh,
+    '```',
+    '',
+    '**Windows** (PowerShell)',
     '',
     '```powershell',
     `irm ${latestUrl(base, 'install.ps1')} | iex`,
@@ -161,7 +170,12 @@ export function releaseNotes(version: string, changes: string[], vendor?: RegExp
     '',
     '## Files',
     '',
-    'One self-contained build per platform (`.gz` copies are compressed). The installers and `zetta upgrade` check every download against `SHA256SUMS`.',
+    'You don\'t need to download these yourself: the command above picks the right one.',
+    '',
+    '- `zetta-macos`, `zetta-linux-x64`, `zetta-windows-x64.exe`: zetta itself, one file per system (the Mac file runs on Apple Silicon and Intel).',
+    '- `install.sh`, `install.ps1`: the installers the commands above run.',
+    '- `latest.json`: how installed copies learn that a new version is out.',
+    '- `SHA256SUMS`: the checksums every download is verified against.',
     '',
   ].join('\n')
 }
