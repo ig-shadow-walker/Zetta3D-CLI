@@ -1,6 +1,6 @@
 {
   "name": "@zetta3d/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Zetta 3D from the terminal, built for people and AI agents.",

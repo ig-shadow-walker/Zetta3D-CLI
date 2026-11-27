@@ -3,10 +3,10 @@ name: zetta3d
 description: Make, change and manage 3D models with the Zetta 3D CLI (zetta) — text or pictures to 3D, retopology, segmentation, UVs, texturing, rigging, format conversion, pictures and PBR texture maps, Gaussian-splat worlds, multi-step pipelines and batches, and the Zetta 3D library, credits, plan and API keys. Use when the user wants a 3D asset made, edited, downloaded, imported or exported, mentions Zetta 3D or zetta, or asks about their Zetta 3D account.
 compatibility: Needs the zetta command-line tool (curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.sh | sh, which also installs this skill).
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
-<!-- Installed and kept up to date by zetta 0.1.0; edits here are replaced on the next update. -->
+<!-- Installed and kept up to date by zetta 0.1.1; edits here are replaced on the next update. -->
 
 # Zetta 3D CLI — guide for AI agents
 
