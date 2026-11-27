@@ -77,6 +77,25 @@ export function mergeMcpJson(text: string | undefined, command: string, args: st
   return `${JSON.stringify(config, null, 2)}\n`
 }
 
+/**
+ * Takes our server out of an `mcpServers` JSON config, leaving every other server as it was. `removed` is
+ * false when it was not there, and a file that is not valid JSON is left alone: this only ever tidies up.
+ */
+export function withoutMcpJson(text: string): { text: string; removed: boolean } {
+  let config: Record<string, unknown>
+  try {
+    config = JSON.parse(text) as Record<string, unknown>
+  } catch {
+    return { text, removed: false }
+  }
+  const servers = config.mcpServers
+  if (!servers || typeof servers !== 'object' || !(SKILL_NAME in servers)) return { text, removed: false }
+  const rest = { ...(servers as Record<string, unknown>) }
+  delete rest[SKILL_NAME]
+  config.mcpServers = rest
+  return { text: `${JSON.stringify(config, null, 2)}\n`, removed: true }
+}
+
 function desktopConfigPath(env: NodeJS.ProcessEnv): string {
   if (process.platform === 'darwin') return join(homeDir(env), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json')
   if (process.platform === 'win32') return join(appDataDir(env), 'Claude', 'claude_desktop_config.json')
@@ -231,6 +250,9 @@ export const skillShow = defineCommand({
 
 const CLIENTS = ['claude-code', 'claude-desktop', 'cursor', 'codex', 'agents-md'] as const
 
+/** The agents that can run commands, so the skill is all they need and MCP is opt-in. */
+const CODING_AGENTS: ReadonlyArray<(typeof CLIENTS)[number]> = ['claude-code', 'cursor', 'codex']
+
 interface SetupStep {
   what: string
   path?: string
@@ -238,32 +260,50 @@ interface SetupStep {
   result: string
 }
 
+/*
+ * THE SKILL, NOT MCP, FOR CODING AGENTS. An agent with a shell runs `zetta` like any other command, and
+ * the skill tells it how: its description is all that sits in the agent's context until a task needs
+ * more. The MCP server's tool list (every command's JSON Schema) is far larger and is loaded into every
+ * session whether 3D comes up or not, and it gives a coding agent nothing the shell does not. So for
+ * claude-code, cursor and codex the server is opt-in (`--mcp`); Claude Desktop cannot run commands, so
+ * MCP stays its way in.
+ */
+const MCP_NOT_ADDED = 'none: the skill is all a coding agent needs (add --mcp for one)'
+const MCP_REMOVED = 'removed the one an earlier setup added: the skill replaces it (add --mcp to keep one)'
+
 export const setupCommand = defineCommand({
   path: ['setup'],
-  summary: 'Connect an AI tool to Zetta 3D: Claude Code, Claude Desktop, Cursor, Codex, or an AGENTS.md.',
+  summary: 'Connect an AI tool to Zetta 3D: Claude Code, Codex, Cursor, Claude Desktop, or an AGENTS.md.',
   description: [
-    'claude-code     installs the skill (~/.claude/skills) and registers the MCP server (`claude mcp add`).',
-    'claude-desktop  adds the MCP server to claude_desktop_config.json.',
-    'cursor          installs the skill (~/.agents/skills) and adds the MCP server to ~/.cursor/mcp.json.',
-    'codex           installs the skill (~/.agents/skills) and adds the MCP server to ~/.codex/config.toml.',
+    'claude-code     installs the skill (~/.claude/skills).',
+    'codex           installs the skill (~/.agents/skills).',
+    'cursor          installs the skill (~/.agents/skills).',
+    'claude-desktop  adds the MCP server to claude_desktop_config.json: it cannot run commands, so MCP is its way in.',
     'agents-md       adds the guide to ./AGENTS.md (read by many coding agents).',
+    'A coding agent runs zetta in its shell and the skill tells it how, at a fraction of the context an MCP server costs: its tool list loads into every session. So for claude-code, codex and cursor the MCP server is opt-in: add --mcp. Re-running without --mcp removes one an earlier setup added.',
     'Existing files are backed up to .bak, and re-running replaces our entry instead of duplicating it.',
-    'Without --budget, paid MCP tools need yes or maxCredits on every call.',
+    'With MCP and no --budget, paid tools need yes or maxCredits on every call.',
   ].join('\n'),
   kind: 'local',
   mcp: false,
   positionals: [{ name: 'client', required: true }],
   input: z.object({
     client: z.enum(CLIENTS).describe('The AI tool to connect.'),
-    budget: z.number().int().min(0).optional().describe('Credits each MCP session may spend without per-call confirmation.'),
-    readOnly: z.boolean().optional().describe('Offer only read-only tools over MCP.'),
+    mcp: z.boolean().optional().describe('claude-code, codex, cursor: also connect the MCP server. Not needed: the agent runs zetta in its shell.'),
+    budget: z.number().int().min(0).optional().describe('With MCP: credits each session may spend without per-call confirmation.'),
+    readOnly: z.boolean().optional().describe('With MCP: offer only read-only tools.'),
     print: z.boolean().optional().describe('Show what would change, and change nothing.'),
   }),
-  examples: ['zetta setup claude-code --budget 500', 'zetta setup claude-desktop --read-only', 'zetta setup agents-md --print'],
+  examples: ['zetta setup claude-code', 'zetta setup claude-desktop --budget 500', 'zetta setup cursor --mcp --read-only', 'zetta setup agents-md --print'],
   async run(ctx: Context, input) {
+    const coding = CODING_AGENTS.includes(input.client)
+    const withMcp = input.client === 'claude-desktop' || (coding && input.mcp === true)
+    if (coding && !input.mcp && (input.budget !== undefined || input.readOnly)) {
+      throw usageError('--budget and --read-only are settings for the MCP server. Add --mcp to connect one, or leave them out: the skill needs neither.')
+    }
     const command = zettaExecutable()
     const args = mcpArgs(input.budget, input.readOnly)
-    if (command === 'zetta' && input.client !== 'agents-md') {
+    if (command === 'zetta' && withMcp) {
       ctx.out.warn('Running from source: the config will call `zetta` from PATH. Install the binary for a fixed path.')
     }
     const steps: SetupStep[] = []
@@ -281,16 +321,32 @@ export const setupCommand = defineCommand({
       steps.push({ what: 'skill', path: written.dir, result: written.result })
     }
 
+    /** Without --mcp: take out a server an earlier setup added to this config file, or say there is none. */
+    const withoutServer = (path: string, before: string, after: string) => {
+      if (after === before) {
+        steps.push({ what: 'mcp server', result: MCP_NOT_ADDED })
+        return
+      }
+      if (!input.print) writeWithBackup(path, after)
+      steps.push({ what: 'mcp server', path, result: input.print ? 'would remove the one an earlier setup added' : MCP_REMOVED })
+    }
+
     switch (input.client) {
       case 'claude-code': {
         await installSkill('claude')
         const add = ['mcp', 'add', '--scope', 'user', SKILL_NAME, '--', command, ...args]
         const shown = `claude ${add.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}`
         if (input.print) {
-          steps.push({ what: 'mcp server', command: shown, result: 'would run' })
+          steps.push(withMcp ? { what: 'mcp server', command: shown, result: 'would run' } : { what: 'mcp server', result: `${MCP_NOT_ADDED}; would remove one an earlier setup added` })
           break
         }
         const found = spawnSync('claude', ['--version'], { stdio: 'ignore' }).status === 0
+        if (!withMcp) {
+          // `claude mcp remove` fails when there is nothing to remove, which is the usual case.
+          const removed = found && spawnSync('claude', ['mcp', 'remove', '--scope', 'user', SKILL_NAME], { stdio: 'ignore' }).status === 0
+          steps.push({ what: 'mcp server', result: removed ? MCP_REMOVED : MCP_NOT_ADDED })
+          break
+        }
         if (!found) {
           steps.push({ what: 'mcp server', command: shown, result: 'Claude Code not found on PATH — run this command yourself' })
           break
@@ -309,14 +365,16 @@ export const setupCommand = defineCommand({
       case 'cursor': {
         await installSkill('agents')
         const path = join(homeDir(ctx.env), '.cursor', 'mcp.json')
-        write('mcp server', path, mergeMcpJson(read(path), command, args))
+        if (withMcp) write('mcp server', path, mergeMcpJson(read(path), command, args))
+        else withoutServer(path, read(path), withoutMcpJson(read(path)).text)
         break
       }
       case 'codex': {
+        await installSkill('agents')
         const config = join(homeDir(ctx.env), '.codex', 'config.toml')
         const toml = [`[mcp_servers.${SKILL_NAME}]`, `command = ${JSON.stringify(command)}`, `args = [${args.map((a) => JSON.stringify(a)).join(', ')}]`].join('\n')
-        write('mcp server', config, withMarkedBlock(read(config), toml, hash))
-        await installSkill('agents')
+        if (withMcp) write('mcp server', config, withMarkedBlock(read(config), toml, hash))
+        else withoutServer(config, read(config), withoutMarkedBlock(read(config), hash))
         break
       }
       case 'agents-md': {
@@ -325,7 +383,7 @@ export const setupCommand = defineCommand({
         break
       }
     }
-    return { client: input.client, mcpCommand: [command, ...args].join(' '), steps }
+    return { client: input.client, mcp: withMcp, ...(withMcp ? { mcpCommand: [command, ...args].join(' ') } : {}), steps }
   },
   text: (r: { client: string; steps: SetupStep[] }) =>
     [`Setting up ${r.client}:`, ...r.steps.map((s) => `  ${s.what.padEnd(11)} ${s.result}${s.path ? `  ${s.path}` : ''}${s.command ? `\n              ${s.command}` : ''}`)].join('\n'),

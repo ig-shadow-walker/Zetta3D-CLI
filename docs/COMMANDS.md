@@ -2261,15 +2261,16 @@ zetta mcp --read-only
 
 ### `zetta setup`
 
-Connect an AI tool to Zetta 3D: Claude Code, Claude Desktop, Cursor, Codex, or an AGENTS.md.
+Connect an AI tool to Zetta 3D: Claude Code, Codex, Cursor, Claude Desktop, or an AGENTS.md.
 
-claude-code     installs the skill (~/.claude/skills) and registers the MCP server (`claude mcp add`).
-claude-desktop  adds the MCP server to claude_desktop_config.json.
-cursor          installs the skill (~/.agents/skills) and adds the MCP server to ~/.cursor/mcp.json.
-codex           installs the skill (~/.agents/skills) and adds the MCP server to ~/.codex/config.toml.
+claude-code     installs the skill (~/.claude/skills).
+codex           installs the skill (~/.agents/skills).
+cursor          installs the skill (~/.agents/skills).
+claude-desktop  adds the MCP server to claude_desktop_config.json: it cannot run commands, so MCP is its way in.
 agents-md       adds the guide to ./AGENTS.md (read by many coding agents).
+A coding agent runs zetta in its shell and the skill tells it how, at a fraction of the context an MCP server costs: its tool list loads into every session. So for claude-code, codex and cursor the MCP server is opt-in: add --mcp. Re-running without --mcp removes one an earlier setup added.
 Existing files are backed up to .bak, and re-running replaces our entry instead of duplicating it.
-Without --budget, paid MCP tools need yes or maxCredits on every call.
+With MCP and no --budget, paid tools need yes or maxCredits on every call.
 
 ```
 zetta setup <client> [flags]
@@ -2280,15 +2281,17 @@ Kind: local only · not an MCP tool
 | Argument / flag | Type | Description |
 |---|---|---|
 | `<client>` | `claude-code` \| `claude-desktop` \| `cursor` \| `codex` \| `agents-md` | The AI tool to connect. (**required**) |
-| `--budget` | number | Credits each MCP session may spend without per-call confirmation. |
-| `--read-only` | boolean | Offer only read-only tools over MCP. |
+| `--mcp` | boolean | claude-code, codex, cursor: also connect the MCP server. Not needed: the agent runs zetta in its shell. |
+| `--budget` | number | With MCP: credits each session may spend without per-call confirmation. |
+| `--read-only` | boolean | With MCP: offer only read-only tools. |
 | `--print` | boolean | Show what would change, and change nothing. |
 
 Examples:
 
 ```bash
-zetta setup claude-code --budget 500
-zetta setup claude-desktop --read-only
+zetta setup claude-code
+zetta setup claude-desktop --budget 500
+zetta setup cursor --mcp --read-only
 zetta setup agents-md --print
 ```
 

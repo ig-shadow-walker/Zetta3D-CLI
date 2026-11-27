@@ -132,6 +132,6 @@ zetta asset delete 1240 --yes
 ## What next
 
 - **Many files at once:** write a pipeline recipe and batch-run it over a folder. See [pipelines.md](pipelines.md).
-- **Let an AI assistant drive it:** `zetta setup claude-code`, and see [ai-agents.md](ai-agents.md).
+- **Let an AI assistant drive it:** it's ready. The installer set up the skill for Claude Code, Codex and Cursor, so just ask in plain words (no MCP server needed). See [ai-agents.md](ai-agents.md).
 - **Make it yours:** `zetta config set download.dir models` collects every download in one folder, and `download.formats glb,fbx` keeps only those formats. See [configuration.md](configuration.md).
 - **Errors:** every error names its code and suggests a next step. See [troubleshooting.md](troubleshooting.md).

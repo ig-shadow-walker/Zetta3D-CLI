@@ -1,28 +1,37 @@
-# AI agents and MCP
+# AI agents
 
 `zetta` is designed to be driven by AI agents (Claude Code, Codex, Cursor, custom agents, CI) as much as by people. There are three ways in:
 
 | Way | Best for | Set up with |
 |---|---|---|
-| **Shell commands** + the skill | Coding agents that run commands (Claude Code, Codex, Cursor's agent) | Installed with zetta (see [The agent skill](#the-agent-skill)), or `zetta skill install` |
-| **MCP server** | Chat apps and agents that speak MCP (Claude Desktop, Cursor, Claude Code) | `zetta setup claude-desktop` / `cursor` / `claude-code` |
+| **Shell commands** + the skill | Coding agents that run commands (Claude Code, Codex, Cursor's agent). **The way to use it.** | Installed with zetta (see [The agent skill](#the-agent-skill)), or `zetta skill install` |
+| **MCP server** | Apps that can't run commands (Claude Desktop, other chat apps) | `zetta setup claude-desktop` |
 | **SDK** | Your own TypeScript programs | `@zetta3d/sdk` (see [packages/sdk/README.md](../packages/sdk/README.md)) |
+
+## Why a skill, not MCP
+
+A coding agent runs `zetta` in its shell, like `git`, and the skill tells it how. Until a task needs it, the skill costs the agent only its short description, a couple of hundred tokens; the rest is read when it is needed, one reference file at a time.
+
+An MCP server works the other way round: its tool list (every command's name, description and JSON Schema, over 20,000 tokens for zetta) is loaded into every session, whether 3D comes up or not. Each call's result costs the same either way, since both are the same JSON. So for an agent that can run commands, MCP adds context and gives nothing the commands don't, and `zetta setup` connects one to Claude Code, Codex or Cursor only when you ask with `--mcp`.
+
+MCP is still the way in for apps that can't run commands, such as Claude Desktop: [The MCP server](#the-mcp-server).
 
 ## Connect your tool
 
 ```bash
-zetta setup claude-code --budget 500     # skill in ~/.claude/skills + `claude mcp add` (user scope)
-zetta setup claude-desktop               # adds zetta to claude_desktop_config.json (restart the app)
-zetta setup cursor                       # skill in ~/.agents/skills + zetta in ~/.cursor/mcp.json
-zetta setup codex                        # skill in ~/.agents/skills + [mcp_servers.zetta3d] in ~/.codex/config.toml
+zetta setup claude-code                  # the skill in ~/.claude/skills
+zetta setup codex                        # the skill in ~/.agents/skills
+zetta setup cursor                       # the skill in ~/.agents/skills (Cursor reads ~/.claude/skills too)
 zetta setup agents-md                    # the guide in ./AGENTS.md, for any agent that reads it
+zetta setup claude-desktop --budget 500  # the MCP server in claude_desktop_config.json (restart the app)
 zetta setup cursor --print               # show what would change, change nothing
 ```
 
 How `setup` behaves:
+- **MCP is opt-in for coding agents.** `--mcp` adds the server too (`claude mcp add` at user scope, `~/.cursor/mcp.json`, or `[mcp_servers.zetta3d]` in `~/.codex/config.toml`). Re-running without `--mcp` removes one an earlier setup added; other servers are never touched.
 - **Re-running** replaces its own entry; it never duplicates it.
 - **Backups:** existing files are backed up to `.bak`.
-- **Spending:** `--budget N` lets an MCP session spend up to N credits in total without per-call confirmation. Without it, every paid tool call must pass `maxCredits` or `yes`.
+- **Spending:** with MCP, `--budget N` lets a session spend up to N credits in total without per-call confirmation. Without it, every paid tool call must pass `maxCredits` or `yes`. `--budget` and `--read-only` need `--mcp` for claude-code, codex and cursor.
 - **`--read-only`** offers only tools that never change anything.
 
 ## The agent skill
@@ -124,6 +133,8 @@ Branch on `code` or on the exit code, and follow `hint`.
 **Signing in.** Agents and CI should use an API key: `ZETTA_API_KEY=zk_live_…`. A key doesn't expire, can be revoked at any time, and can't manage keys, billing or the account. The user makes one with `zetta apikey create <name>` on a machine where they are signed in with a browser. Commands a key can't run fail with `API_KEY_NOT_ALLOWED` (exit code 3); see [what an API key can do](authentication.md#what-an-api-key-can-do). Keys allow 300 requests a minute and 5,000 an hour, and the CLI waits out short `Retry-After` waits (up to a minute) by itself.
 
 ## The MCP server
+
+For apps that can't run commands, such as Claude Desktop. An agent with a shell doesn't need it: see [Why a skill, not MCP](#why-a-skill-not-mcp).
 
 ```bash
 zetta mcp                       # stdio MCP server

@@ -9,7 +9,7 @@
   <a href="https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/release-latest-15130F?style=flat-square"></a>
   <a href="#install"><img alt="macOS, Linux and Windows" src="https://img.shields.io/badge/macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-15130F?style=flat-square"></a>
   <a href="#install"><img alt="One-line install, no dependencies" src="https://img.shields.io/badge/install-one%20line-15130F?style=flat-square"></a>
-  <a href="#use-it-from-ai-agents"><img alt="MCP server included" src="https://img.shields.io/badge/MCP-server%20included-1677FF?style=flat-square"></a>
+  <a href="#use-it-from-ai-agents"><img alt="Agent skill included, no MCP needed" src="https://img.shields.io/badge/agent%20skill-no%20MCP%20needed-1677FF?style=flat-square"></a>
   <a href="#use-it-from-ai-agents"><img alt="Built for AI agents" src="https://img.shields.io/badge/built%20for-AI%20agents-1677FF?style=flat-square"></a>
 </p>
 
@@ -17,7 +17,7 @@
   <a href="#install"><b>Install</b></a> ·
   <a href="docs/getting-started.md"><b>Getting started</b></a> ·
   <a href="#features"><b>Features</b></a> ·
-  <a href="docs/ai-agents.md"><b>AI agents &amp; MCP</b></a> ·
+  <a href="docs/ai-agents.md"><b>AI agents</b></a> ·
   <a href="docs/COMMANDS.md"><b>Commands</b></a> ·
   <a href="https://zetta3d.ai"><b>zetta3d.ai</b></a>
 </p>
@@ -42,7 +42,7 @@ zetta generate --image chair.png --max-credits 100 --out ./models
 
 - **One line to install.** A single self-contained program for macOS, Linux and Windows. No Node, Python or package manager needed.
 - **Your whole account.** Generation, refining, pictures, splat worlds, pipelines, your library, credits and billing.
-- **Built for AI agents.** JSON output, stable exit codes, a built-in MCP server, and an agent skill for Claude Code, Codex and Cursor that installs itself.
+- **Built for AI agents.** A skill that teaches Claude Code, Codex and Cursor to use it and installs itself, JSON output and stable exit codes. No MCP server needed: the agent runs `zetta` in its shell, and only the skill's short description sits in its context until a task needs more.
 - **Nothing costs credits by accident.** Every paid command shows its price first; `--dry-run`, `--max-credits` and `--yes` keep you in control.
 - **Always up to date.** `zetta` tells you when a new version is out and updates itself in seconds.
 
@@ -186,7 +186,7 @@ The step-by-step walkthrough is in [docs/getting-started.md](docs/getting-starte
 | **Pipelines** | Multi-step recipes (picture → model → retopology → rig), the same as in the web editor; validate, price, and run them over a whole folder | `pipeline`, `run` |
 | **Library** | List, search, wait for, download, share, tag, import and delete your models; export to OBJ, FBX or STL locally | `asset` |
 | **Account** | Credits, usage history, plans, checkout, trial codes, API keys, connected apps | `account`, `billing`, `apikey` |
-| **Agents** | MCP server, agent skill, one-command setup for Claude Code, Claude Desktop, Codex and Cursor | `mcp`, `skill`, `setup` |
+| **Agents** | The agent skill for Claude Code, Codex and Cursor; an MCP server for apps that can't run commands, such as Claude Desktop | `skill`, `setup`, `mcp` |
 
 Results come back as GLB, FBX, OBJ, STL, USDZ, glTF or PLY. Every command and flag is in [docs/COMMANDS.md](docs/COMMANDS.md).
 
@@ -206,21 +206,21 @@ Results come back as GLB, FBX, OBJ, STL, USDZ, glTF or PLY. Every command and fl
 
 ## Use it from AI agents
 
-`zetta` is designed to be driven by agents such as Claude Code, Codex, Cursor and CI scripts.
+`zetta` is designed to be driven by agents such as Claude Code, Codex, Cursor and CI scripts. **They need nothing but the skill**, which the installer has already set up: the agent runs `zetta` in its shell, like `git`, and the skill tells it how.
 
 ```bash
-zetta setup claude-code --budget 500      # skill + MCP server for Claude Code, capped at 500 credits a session
-zetta setup claude-desktop                # MCP server for Claude Desktop
-zetta setup cursor                        # skill + MCP server for Cursor
-zetta setup codex                         # skill + MCP server for Codex
+zetta skill status                        # where the skill is installed, and whether it is current
+zetta setup claude-code                   # the skill for Claude Code (also: codex, cursor)
 zetta setup agents-md                     # a guide in ./AGENTS.md for any other agent
+zetta setup claude-desktop                # an MCP server, for apps that can't run commands
 ```
 
+- **Why a skill, not MCP.** Until a task needs it, the skill costs an agent only its short description, a couple of hundred tokens. An MCP server's tool list is every command's JSON Schema, over 20,000 tokens, loaded into every session whether 3D comes up or not. A coding agent with a shell gets nothing from MCP that the commands don't already give it, so `zetta setup` adds a server to Claude Code, Codex or Cursor only with `--mcp`.
 - **Predictable output.** JSON on stdout whenever it isn't a terminal; diagnostics on stderr. Every error has the same shape, `{"error":{"code","message","details","hint","exitCode"}}`, and the `hint` names the next command to run.
 - **Exit codes to branch on.** 0 ok · 2 fix the input · 3 sign in · 4 plan doesn't allow it · 5 credits or spend limit · 6 not found · 7 conflict · 8 rate limited · 9 job failed · 10 still running · 11 network or server.
 - **Self-describing.** `zetta commands --json` lists every command and flag; `zetta schema <command>` gives its JSON Schema.
 - **Safe retries.** `--idempotency-key <key>` makes a retry free of double charges.
-- **MCP.** `zetta mcp` serves the commands as MCP tools with the same checks. `--budget N` caps what a session may spend; `--read-only` offers only tools that change nothing.
+- **MCP, for apps without a shell.** `zetta mcp` serves the commands as MCP tools with the same checks, for Claude Desktop and other chat apps. `--budget N` caps what a session may spend; `--read-only` offers only tools that change nothing.
 - **The skill keeps itself current.** It is installed where Claude Code, Codex and Cursor look, and updated with every new `zetta`. `zetta skill uninstall` removes it.
 
 The full agent guide is printed by `zetta guide`, and lives in [docs/ai-agents.md](docs/ai-agents.md).
@@ -279,7 +279,7 @@ Then delete the `# zetta` line the installer added to your shell's startup file.
 | [Your library](docs/library.md) | Listing, waiting, downloading, sharing, tagging, importing, texture maps, deleting |
 | [Images](docs/images.md) | Generating, editing and combining pictures; removing backgrounds |
 | [Pipelines](docs/pipelines.md) | Recipes in YAML, validating, pricing, running and batching |
-| [AI agents and MCP](docs/ai-agents.md) | The output contract, the spend guard, MCP, skills, setup per tool |
+| [AI agents](docs/ai-agents.md) | The skill, the output contract, the spend guard, setup per tool; MCP for apps without a shell |
 | [Configuration](docs/configuration.md) | Settings, profiles, environment variables, output formats |
 | [Troubleshooting](docs/troubleshooting.md) | Every error code and what to do about it |
 | [Command reference](docs/COMMANDS.md) | Every command and flag, generated from the code |

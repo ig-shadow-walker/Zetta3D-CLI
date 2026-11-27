@@ -95,9 +95,9 @@ current folder: add \`--no-wait\` to return at once, and \`--no-download\` to \`
 
 ## MCP
 
-\`zetta mcp --budget 500\` serves the commands as MCP tools with the same checks; the budget
-caps what the session may spend. Not served: sign-in, \`apikey create\` (it returns a secret)
-and \`billing agent-plan\`.
+Not needed: run these commands in your shell. Don't set up \`zetta mcp\` for yourself, since its
+tool list would sit in your context every session. It is for apps that can't run commands, such
+as Claude Desktop (\`zetta setup claude-desktop\`).
 `
 
 export const SKILL_NAME = 'zetta3d'

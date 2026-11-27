@@ -15,7 +15,7 @@
 
 **For AI agents**
 
-- [AI agents and MCP](ai-agents.md): the output contract, the spend guard, MCP, skills, `zetta setup`
+- [AI agents](ai-agents.md): the skill, the output contract, the spend guard, `zetta setup`; MCP for apps without a shell
 - [Agent skill](../skill/zetta3d/SKILL.md): the skill agents load (installed with zetta)
 
 **Reference**
