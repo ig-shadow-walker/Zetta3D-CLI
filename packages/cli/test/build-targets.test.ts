@@ -18,8 +18,8 @@ describe('bun run build target names', () => {
     ])
   })
 
-  it('knows all and this machine, without duplicates', () => {
-    expect(resolveTargets(['all'])).toHaveLength(7)
+  it('knows all (what a release builds) and this machine, without duplicates', () => {
+    expect(resolveTargets(['all'])).toEqual(['darwin-arm64', 'darwin-x64', 'linux-x64', 'windows-x64'])
     expect(resolveTargets(['current', 'macos-arm64'], 'darwin-arm64')).toEqual(['darwin-arm64'])
   })
 
@@ -28,7 +28,7 @@ describe('bun run build target names', () => {
   })
 
   it('names release folders by platform', () => {
-    expect(['darwin-arm64', 'darwin-x64-baseline', 'linux-arm64-musl', 'windows-x64'].map(platformFolder)).toEqual(['macos-arm64', 'macos-x64-baseline', 'linux-arm64-musl', 'windows-x64'])
+    expect(['darwin-universal', 'darwin-arm64', 'darwin-x64-baseline', 'linux-arm64-musl', 'windows-x64'].map(platformFolder)).toEqual(['macos', 'macos-arm64', 'macos-x64-baseline', 'linux-arm64-musl', 'windows-x64'])
   })
 
   it('rejects names it does not know', () => {

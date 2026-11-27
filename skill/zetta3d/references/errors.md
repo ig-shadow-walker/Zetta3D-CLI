@@ -97,7 +97,6 @@ The browser doesn't come back to the terminal?
 | `doctor` says "no system keychain" | Normal on servers and in containers: the saved token or key is kept in a `0600` file instead |
 | Downloaded models look wrong in an app | Try another format (`--format fbx`), or convert locally (`zetta asset export --format …`) |
 | Local export says the model uses compressed geometry | Convert on the server: `zetta refine convert <id> --to fbx` |
-| Alpine: the binary won't start | `apk add libstdc++` |
 | Output contains colour codes in logs | `--no-color` or `NO_COLOR=1` (colour is already off when output isn't a terminal) |
 | Piping into `head` | Supported: `zetta … \| head` exits quietly |
 

@@ -5,8 +5,13 @@
  * Releases are GitHub releases (default base https://github.com/<RELEASE_REPO>/releases):
  *
  *   latest/download/latest.json              -> LatestManifest for the newest stable release
- *   download/v<version>/zetta-<key>[.exe]    -> one binary per platform key (+ a .gz copy)
+ *   download/v<version>/zetta-macos          -> every Mac (Apple Silicon and Intel, one universal file)
+ *   download/v<version>/zetta-linux-x64      -> Linux (x64, glibc)
+ *   download/v<version>/zetta-windows-x64.exe -> Windows (x64; Windows on Arm runs it too)
  *   download/v<version>/SHA256SUMS           -> "<sha256>  <file name>" per line
+ *
+ * Other keys (`linux-arm64`, `-musl`, `-baseline`) can still be built locally, and clients still
+ * understand them and `.gz` copies, but releases ship only the three files above.
  *
  * Any other base is a plain folder (a mirror, or a local stand-in for tests):
  * `<base>/latest.json` and `<base>/v<version>/<file>`.
@@ -66,13 +71,18 @@ export function latestUrl(base: string | undefined, file: string): string {
   return isGitHubReleases(root) ? `${root}/latest/download/${file}` : `${root}/${file}`
 }
 
-/** `linux-x64-musl` -> `zetta-linux-x64-musl`; Windows keys get `.exe`. */
+/** The one macOS build: Apple Silicon and Intel in a single universal file, `zetta-macos`. */
+export const MAC_UNIVERSAL = 'darwin-universal'
+
+/** `linux-x64` -> `zetta-linux-x64`; Windows keys get `.exe`; the universal Mac build is `zetta-macos`. */
 export function binaryName(key: string): string {
+  if (key === MAC_UNIVERSAL) return 'zetta-macos'
   return `zetta-${key}${key.startsWith('windows-') ? '.exe' : ''}`
 }
 
 /** The platform key encoded in a binary's file name, or undefined if it is not one of ours. */
 export function keyFromBinaryName(name: string): string | undefined {
+  if (name === 'zetta-macos') return MAC_UNIVERSAL
   const m = /^zetta-((?:darwin|linux|windows)-[a-z0-9]+(?:-musl)?(?:-baseline)?)(\.exe)?$/.exec(name)
   if (!m?.[1]) return undefined
   const key = m[1]

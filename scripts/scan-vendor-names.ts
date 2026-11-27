@@ -282,6 +282,13 @@ export function binaryKey(file: string): string | undefined {
 
 function runtimeBaseline(key: string, matchers: { text: RegExp; utf16: RegExp }): Set<string> | undefined {
   if (baselines.has(key)) return baselines.get(key)
+  if (key === 'darwin-universal') {
+    // zetta-macos is the arm64 and x64 builds side by side: both runtimes are in it.
+    const [arm, intel] = [runtimeBaseline('darwin-arm64', matchers), runtimeBaseline('darwin-x64', matchers)]
+    const both = arm && intel ? new Set([...arm, ...intel]) : undefined
+    baselines.set(key, both)
+    return both
+  }
   baselineDir ??= mkdtempSync(join(tmpdir(), 'zetta-scan-'))
   const entry = join(baselineDir, 'empty.ts')
   writeFileSync(entry, 'export {}\n')

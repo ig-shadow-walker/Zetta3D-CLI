@@ -11,8 +11,8 @@
  *   1. Pre-flight: a GitHub token that can publish, a clean working tree on the default branch that is
  *      not behind origin, a new tag, and a version newer than the published one.
  *   2. Set packages/cli/package.json to the version; regenerate the docs and the agent skill.
- *   3. `bun run build --release`: typecheck, tests, lint, every platform (macOS, Linux, Windows, plus
- *      the x64 builds for older CPUs), the vendor-name scan, and the installer end to end.
+ *   3. `bun run build --release`: typecheck, tests, lint, the three builds (macOS as one universal file,
+ *      Linux x64, Windows x64), the vendor-name scan, and the installer end to end.
  *      If anything fails, the version change is undone.
  *   4. Commit "Release v<version>", tag v<version>, push both.
  *   5. Create the GitHub release as a draft, upload every file, then publish it. A stable release
@@ -25,14 +25,13 @@ import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { parseArgs } from 'node:util'
 import { binaryName, compareVersions, keyFromBinaryName, latestUrl, normalizeVersion, RELEASE_REPO, versionUrl } from '../packages/cli/src/upgrade/manifest'
-import { TARGETS } from './build-binaries'
+import { RELEASE_KEYS } from './build-binaries'
 import { GitHub, githubToken, TOKEN_HELP, type GitHubRelease, type ReleaseAsset } from './github-release'
 import { buildMatchers, cleanWords, extractArrayStrings, parseWordText, scanText } from './scan-vendor-names'
 
 const ROOT = resolve(import.meta.dirname, '..')
 const PACKAGE = join(ROOT, 'packages', 'cli', 'package.json')
 const DIST = join(ROOT, 'dist')
-const RELEASE_KEYS = TARGETS.map((t) => t.replace(/^bun-/, ''))
 
 const USAGE = `Usage: bun run release [version] [options]
 
@@ -106,7 +105,7 @@ export function withDownloadBase(script: string, base: string): string {
  * ships without Mac, Linux or Windows.
  */
 export function releaseAssets(input: { version: string; versionDir: string; latestJson: string; installDir: string; base: string; releaseKeys?: string[] }): ReleaseAsset[] {
-  const missing = (input.releaseKeys ?? RELEASE_KEYS).filter((key) => !existsSync(join(input.versionDir, binaryName(key))))
+  const missing = (input.releaseKeys ?? [...RELEASE_KEYS]).filter((key) => !existsSync(join(input.versionDir, binaryName(key))))
   if (missing.length) throw new Error(`dist/v${input.version} has no build for ${missing.join(', ')}. Build them all: bun run build --release --version ${input.version}`)
   const manifest = JSON.parse(readFileSync(input.latestJson, 'utf8')) as { version?: string }
   if (manifest.version !== input.version) throw new Error(`${input.latestJson} is for ${manifest.version ?? 'no version'}, not ${input.version}.`)

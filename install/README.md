@@ -35,12 +35,10 @@ Uninstall: delete `~/.zetta` (Windows: `%LOCALAPPDATA%\zetta`) and the `# zetta`
 | `NO_COLOR=1` | no colour. Colour and progress lines only appear when output is a terminal anyway |
 
 How a build is chosen:
-- **CPU and OS:** `darwin|linux|windows` × `x64|arm64`.
-- **Apple Silicon:** gets arm64 even from a Rosetta shell.
-- **Linux libc:** Alpine and other musl systems get the `-musl` build. Those builds need `libstdc++`. When the installer runs as root with `apk`, it installs `libstdc++` itself and says so. Otherwise it stops and prints the `apk add libstdc++` command to run.
-- **Old x64 CPUs:** an x64 CPU without AVX2 gets the `-baseline` build when the release has one; otherwise it gets a clear error.
-- **Windows on Arm:** gets the x64 build, which runs under emulation, unless the release has a native `windows-arm64` build.
-- **Unsupported systems:** anything else (FreeBSD, 32-bit, Git Bash on Windows) gets a clear message.
+- **macOS:** every Mac gets `zetta-macos`, one universal file with the Apple Silicon and Intel builds.
+- **Linux:** x64 with glibc gets `zetta-linux-x64`.
+- **Windows:** `zetta-windows-x64.exe`; Windows on Arm runs it under emulation.
+- **Unsupported systems** (Linux on ARM, Alpine and other musl systems, x64 CPUs without AVX2, FreeBSD, 32-bit, Git Bash on Windows) get a clear message, and nothing is installed.
 
 ## How releases are hosted
 
@@ -50,12 +48,9 @@ Every release is a GitHub release of [ig-shadow-walker/Zetta3D-CLI](https://gith
 
 | File | What | Content-Type |
 |---|---|---|
-| `zetta-darwin-arm64`, `zetta-darwin-x64` | macOS builds | `application/octet-stream` |
-| `zetta-linux-x64`, `zetta-linux-arm64` | glibc Linux builds | 〃 |
-| `zetta-linux-x64-musl`, `zetta-linux-arm64-musl` | musl (Alpine) builds | 〃 |
-| `zetta-windows-x64.exe` | Windows build | 〃 |
-| `zetta-*-baseline[.exe]` | x64 builds for CPUs without AVX2 | 〃 |
-| `<build>.gz` | a gzip copy of each build (about 40% of the size); the installers and `zetta upgrade` prefer it | `application/gzip` |
+| `zetta-macos` | every Mac: the Apple Silicon and Intel builds in one universal file | `application/octet-stream` |
+| `zetta-linux-x64` | Linux (x64, glibc) | 〃 |
+| `zetta-windows-x64.exe` | Windows (x64) | 〃 |
 | `SHA256SUMS` | `<sha256>  <file>` per line (`sha256sum -c` format) | `text/plain; charset=utf-8` |
 | `latest.json` | the version and the checksum of every build (format below) | `application/json` |
 | `install.sh`, `install.ps1` | this folder's installers | `text/plain; charset=utf-8` |
@@ -69,7 +64,7 @@ GitHub answers each download with a redirect to its file host; `curl`, `wget`, P
 Rules:
 - A published version never changes. Only "latest" moves, when a newer stable release is published.
 - Prereleases (`v1.2.0-beta.1`) are published but never become "latest". Install one with `ZETTA_VERSION=1.2.0-beta.1`.
-- Each build is 65–90 MB (the runtime is inside); the `.gz` copies the installers download are 27–41 MB. The installers unpack them themselves.
+- The Linux and Windows builds are 85–90 MB, and `zetta-macos` about 145 MB, because the runtime is inside.
 
 `latest.json` (shared by the installers and `zetta upgrade`; produced by `scripts/build-binaries.ts`):
 
@@ -78,15 +73,14 @@ Rules:
   "version": "0.2.0",
   "released": "2026-10-21T09:00:00.000Z",
   "files": {
-    "darwin-arm64": { "name": "zetta-darwin-arm64", "sha256": "…64 hex…", "size": 67857522,
-                      "gz": { "name": "zetta-darwin-arm64.gz", "sha256": "…", "size": 28265511 } },
-    "linux-x64-musl": { "name": "zetta-linux-x64-musl", "sha256": "…", "size": 75286064 },
-    "windows-x64": { "name": "zetta-windows-x64.exe", "sha256": "…", "size": 86087168 }
+    "darwin-universal": { "name": "zetta-macos", "sha256": "…64 hex…", "size": 146531442 },
+    "linux-x64": { "name": "zetta-linux-x64", "sha256": "…", "size": 88698424 },
+    "windows-x64": { "name": "zetta-windows-x64.exe", "sha256": "…", "size": 93519360 }
   }
 }
 ```
 
-Keys are `<os>-<arch>[-musl][-baseline]`. `gz` is optional; without it clients download the plain build. Both the `.gz` and the unpacked build are checked against `SHA256SUMS`. The shell and PowerShell installers read only `version` from this file and take checksums from `SHA256SUMS`, so a pinned `ZETTA_VERSION` works the same way.
+Keys are `darwin-universal` (the file `zetta-macos`, which every Mac falls back to) and `<os>-<arch>`. Clients still understand an optional `gz` copy and the `-musl` and `-baseline` keys, which local builds can make, but releases don't ship them. The shell and PowerShell installers read only `version` from this file and take checksums from `SHA256SUMS`, so a pinned `ZETTA_VERSION` works the same way.
 
 Any other `ZETTA_DOWNLOAD_BASE` (one that doesn't end in `/releases`) is read as a plain folder: `<base>/latest.json` and `<base>/v<version>/<file>`. That is for mirrors and local tests.
 
@@ -106,8 +100,8 @@ Until signing is set up, release builds are unsigned, apart from the ad-hoc sign
 
 ```sh
 bun run build                            # this machine -> release/<platform>/zetta, plus dist/v<version>/, dist/latest.json, dist/bundle/zetta.js
-bun run build windows alpine             # the targets you name; `bun run build all` for every one
-bun run build all --baseline --version 1.2.3
+bun run build windows linux-x64          # the targets you name; `bun run build all` for the release set
+bun run build macos                      # both Mac builds, merged into one universal release/macos/zetta
 bun run scripts/test-install.ts          # real installer against a local stand-in for GitHub releases, temp HOME
 bun run scripts/test-install.ts --from-dist
 ZETTA_VENDOR_WORDS_FILE=/path/to/list bun run scan:vendor --require-list --require-bundle

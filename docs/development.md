@@ -12,7 +12,7 @@ bun run zetta -- --profile local auth login     # against a local backend (see t
 |---|---|
 | `bun run check` | Typecheck, every test, lint: run before every change you hand over |
 | `bun run test` | Vitest: SDK, request rules, pipelines, every CLI command group |
-| `bun run build [target]` | A binary for this machine, or for the targets you name (`windows`, `macos`, `alpine`, `all`, …) → `release/<platform>/`. `--release` builds and checks a full release |
+| `bun run build [target]` | A binary for this machine, or for the targets you name (`macos`, `linux-x64`, `windows`, `all`, …) → `release/<platform>/`. `--release` builds and checks a full release |
 | `bun run release` | Checks, builds every platform, tags and publishes a GitHub release ([releasing.md](releasing.md)) |
 | `bun run docs:commands` | Regenerates `docs/COMMANDS.md` and the agent skill from the command definitions and `docs/`: the copy the binary embeds (`src/skill/docs.generated.ts`) and the browsable `skill/zetta3d/`. A test fails until you run it |
 | `bun run scan:vendor` | The vendor-name scan (needs the word list; see below) |
@@ -96,7 +96,7 @@ Runs the real CLI against the real API. It creates only what it deletes again.
 bun run smoke:live                                         # public checks only
 ZETTA_API_KEY=… bun run smoke:live                           # every free check, signed in
 ZETTA_API_KEY=… bun run smoke:live --paid --budget 200       # plus the cheapest paid jobs, capped at 200 credits
-bun run smoke:live --bin dist/v0.1.0/zetta-darwin-arm64    # test a built binary
+bun run smoke:live --bin dist/v0.1.0/zetta-macos           # test a built binary
 ```
 
 What the free checks cover:

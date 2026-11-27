@@ -26,7 +26,7 @@ import { tmpdir } from 'node:os'
 import { join, normalize, resolve, sep } from 'node:path'
 import { parseArgs } from 'node:util'
 import { binaryName, parseManifest } from '../packages/cli/src/upgrade/manifest'
-import { platformKey } from '../packages/cli/src/upgrade/platform'
+import { candidateKeys, platformKey } from '../packages/cli/src/upgrade/platform'
 
 const ROOT = resolve(import.meta.dirname, '..')
 const IS_WINDOWS = process.platform === 'win32'
@@ -145,7 +145,8 @@ if (values['from-dist']) {
   }
   console.log(`Built zetta ${version} for ${key}`)
 }
-const binName = binaryName(key)
+// This machine's file: its own build, or one that runs here (every Mac runs the universal zetta-macos).
+const binName = candidateKeys(key).map((k) => binaryName(k)).find((name) => existsSync(join(srvRoot, `v${version}`, name))) ?? binaryName(key)
 const binPath = join(srvRoot, `v${version}`, binName)
 if (!existsSync(binPath)) throw new Error(`${binPath} not found`)
 
@@ -287,6 +288,8 @@ async function installerChecks(label: string, run: (o: RunOpts) => Promise<Run>,
   check(`[${label}] no temp files left in the install dir`, strays(dir).length === 0, strays(dir).join(', '))
   if (existsSync(`${binPath}.gz`)) {
     check(`[${label}] downloads the gzip copy, not the full binary`, requests.some((p) => p.endsWith(`${binName}.gz`)) && !requests.some((p) => p.endsWith(`/${binName}`)), requests.filter((p) => p.includes('zetta-')).join(', '))
+  } else {
+    check(`[${label}] downloads ${binName}, the build for this machine`, requests.some((p) => p.endsWith(`/${binName}`)), requests.filter((p) => p.includes('zetta-')).join(', '))
   }
 
   r = await run({ dir, version })
@@ -347,7 +350,7 @@ async function upgradeCheck(): Promise<void> {
   const dir = join(tmp, 'inst-upgrade', 'bin')
   mkdirSync(dir, { recursive: true })
   const bin = installed(dir)
-  writeFileSync(bin, readFileSync(join(oldOut, `v${oldVersion}`, binName)), { mode: 0o755 })
+  writeFileSync(bin, readFileSync(join(oldOut, `v${oldVersion}`, binaryName(key))), { mode: 0o755 })
   const env = installerEnv({ dir })
   delete env.ZETTA_INSTALL_DIR
   let r = await exec([bin, 'upgrade'], env)

@@ -6,12 +6,13 @@ import { GitHub, githubToken, type GitHubRelease } from '../../../scripts/github
 import { nextVersion, releaseAssets, releaseNotes, withDownloadBase } from '../../../scripts/release'
 import { buildMatchers } from '../../../scripts/scan-vendor-names'
 import { installMethod, upgradeCommand } from '../src/upgrade'
-import { binaryName, latestUrl, RELEASE_REPO, versionUrl } from '../src/upgrade/manifest'
+import { binaryName, keyFromBinaryName, latestUrl, RELEASE_REPO, versionUrl } from '../src/upgrade/manifest'
+import { candidateKeys } from '../src/upgrade/platform'
 import { knownUpdate, maybeNotifyUpdate, refreshUpdateCheck } from '../src/update-notice'
 import { VERSION } from '../src/version'
 
 const ROOT = join(import.meta.dirname, '..', '..', '..')
-const RELEASE_KEYS = ['darwin-arm64', 'darwin-x64', 'linux-x64', 'linux-arm64', 'linux-x64-musl', 'linux-arm64-musl', 'windows-x64']
+const RELEASE_KEYS = ['darwin-universal', 'linux-x64', 'windows-x64']
 const GITHUB = `https://github.com/${RELEASE_REPO}/releases`
 
 /** A dist/ folder with tiny stand-in builds for `keys`, as build-binaries.ts lays it out. */
@@ -19,14 +20,21 @@ function dist(version: string, keys: string[] = RELEASE_KEYS) {
   const root = mkdtempSync(join(tmpdir(), 'zrel-'))
   const versionDir = join(root, `v${version}`)
   mkdirSync(versionDir)
-  for (const key of keys) {
-    writeFileSync(join(versionDir, binaryName(key)), key)
-    writeFileSync(join(versionDir, `${binaryName(key)}.gz`), key)
-  }
+  for (const key of keys) writeFileSync(join(versionDir, binaryName(key)), key)
   writeFileSync(join(versionDir, 'SHA256SUMS'), '')
   writeFileSync(join(root, 'latest.json'), JSON.stringify({ version }))
   return { version, versionDir, latestJson: join(root, 'latest.json'), installDir: join(ROOT, 'install'), releaseKeys: RELEASE_KEYS }
 }
+
+describe('the Mac build', () => {
+  it('is one universal file, zetta-macos, that every Mac falls back to', () => {
+    expect(binaryName('darwin-universal')).toBe('zetta-macos')
+    expect(keyFromBinaryName('zetta-macos')).toBe('darwin-universal')
+    expect(candidateKeys('darwin-arm64')).toEqual(['darwin-arm64', 'darwin-universal'])
+    expect(candidateKeys('darwin-x64')).toEqual(['darwin-x64', 'darwin-universal'])
+    expect(candidateKeys('linux-x64')).toEqual(['linux-x64'])
+  })
+})
 
 describe('download addresses', () => {
   it('reads GitHub releases by default: latest/download for the newest, download/v<version> for one version', () => {
@@ -50,12 +58,9 @@ describe('bun run release', () => {
     expect(() => nextVersion('0.1.9', 'soon')).toThrow()
   })
 
-  it('publishes every build, SHA256SUMS and the installers, with latest.json last', () => {
+  it('publishes three builds (Mac, Linux, Windows), SHA256SUMS and the installers, with latest.json last', () => {
     const assets = releaseAssets({ ...dist('0.2.0'), base: GITHUB })
-    const names = assets.map((a) => a.name)
-    expect(names).toContain('zetta-darwin-arm64')
-    expect(names).toContain('zetta-windows-x64.exe.gz')
-    expect(names.slice(-4)).toEqual(['SHA256SUMS', 'install.sh', 'install.ps1', 'latest.json'])
+    expect(assets.map((a) => a.name)).toEqual(['zetta-linux-x64', 'zetta-macos', 'zetta-windows-x64.exe', 'SHA256SUMS', 'install.sh', 'install.ps1', 'latest.json'])
     // Windows' `irm … | iex` needs the script as text.
     expect(assets.find((a) => a.name === 'install.ps1')?.type).toMatch(/^text\/plain/)
     expect(assets.find((a) => a.name === 'install.sh')?.text).toContain(`DEFAULT_BASE="${GITHUB}"`)
@@ -63,7 +68,7 @@ describe('bun run release', () => {
   })
 
   it('refuses a release that is missing a platform, or whose latest.json is for another version', () => {
-    expect(() => releaseAssets({ ...dist('0.2.0', ['darwin-arm64', 'windows-x64']), base: GITHUB })).toThrow(/no build for darwin-x64, linux-x64/)
+    expect(() => releaseAssets({ ...dist('0.2.0', ['darwin-universal', 'windows-x64']), base: GITHUB })).toThrow(/no build for linux-x64/)
     const other = dist('0.2.0')
     writeFileSync(other.latestJson, JSON.stringify({ version: '0.1.0' }))
     expect(() => releaseAssets({ ...other, base: GITHUB })).toThrow(/for 0\.1\.0, not 0\.2\.0/)

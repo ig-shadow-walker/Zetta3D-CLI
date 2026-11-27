@@ -4,12 +4,12 @@
  *   bun run build                      # this machine
  *   bun run build windows              # zetta-windows-x64.exe
  *   bun run build macos linux-arm64    # several at once
- *   bun run build all                  # every release target
- *   bun run build --release            # a release: checks, every target + baseline, vendor scan, installer test
+ *   bun run build all                  # the release set: macOS (one universal file), Linux x64, Windows x64
+ *   bun run build --release            # a release: checks, the release set, vendor scan, installer test
  *   bun run build --list               # every target name
  *
- * Output: release/<platform>/zetta[.exe], one folder per platform (macos-arm64, linux-x64-musl,
- * windows-x64, …), plus release/SHA256SUMS. Building one platform leaves the other folders alone.
+ * Output: release/<platform>/zetta[.exe], one folder per platform (macos, linux-x64, windows-x64,
+ * …), plus release/SHA256SUMS. Building one platform leaves the other folders alone.
  *
  * The release files the installers and `zetta upgrade` read (dist/v<version>/ with .gz copies and
  * SHA256SUMS, and dist/latest.json) are written by scripts/build-binaries.ts. Publishing them as a
@@ -20,16 +20,17 @@ import { createHash } from 'node:crypto'
 import { constants, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
-import { binaryName, keyFromBinaryName, normalizeVersion } from '../packages/cli/src/upgrade/manifest'
+import { binaryName, keyFromBinaryName, MAC_UNIVERSAL, normalizeVersion } from '../packages/cli/src/upgrade/manifest'
 import { platformKey } from '../packages/cli/src/upgrade/platform'
-import { BASELINE_TARGETS, TARGETS } from './build-binaries'
+import { BASELINE_TARGETS, OTHER_TARGETS, TARGETS } from './build-binaries'
 
 const ROOT = resolve(import.meta.dirname, '..')
 const RELEASE = join(ROOT, 'release')
 
 /** Every buildable key, e.g. darwin-arm64, linux-x64-musl, windows-x64-baseline. */
-const KEYS = [...TARGETS, ...BASELINE_TARGETS].map((t) => t.replace(/^bun-/, ''))
-const RELEASE_KEYS = TARGETS.map((t) => t.replace(/^bun-/, ''))
+const KEYS = [...TARGETS, ...OTHER_TARGETS, ...BASELINE_TARGETS].map((t) => t.replace(/^bun-/, ''))
+/** What `all` and `--release` build: both Macs (merged into one file), Linux x64, Windows x64. */
+const RELEASE_BUILD_KEYS = TARGETS.map((t) => t.replace(/^bun-/, ''))
 
 const OS_WORDS: Record<string, string> = { mac: 'darwin', macos: 'darwin', osx: 'darwin', darwin: 'darwin', linux: 'linux', alpine: 'linux', musl: 'linux', windows: 'windows', win: 'windows' }
 const ARCH_WORDS: Record<string, string> = { arm64: 'arm64', aarch64: 'arm64', x64: 'x64', amd64: 'x64' }
@@ -38,18 +39,17 @@ const HOST_WORDS = new Set(['current', 'host', 'this', 'local'])
 const USAGE = `Usage: bun run build [target …] [options]
 
 Targets (default: this machine, ${platformKey()}):
-  macos               both Macs (arm64 and x64); macos-arm64 or macos-x64 for one
-  linux               glibc Linux (x64 and arm64); linux-x64 or linux-arm64 for one
-  alpine              musl Linux, e.g. Alpine (x64 and arm64); also linux-arm64-musl
+  all                 what a release ships: macOS (one universal file), Linux x64, Windows x64
+  macos               both Macs, merged into one universal file (zetta-macos); macos-arm64 or macos-x64 for one
+  linux-x64           Linux x64 (glibc)
   windows             zetta-windows-x64.exe
-  all                 every release target
   current             this machine
-  Add -baseline to an x64 target for CPUs without AVX2, e.g. linux-x64-baseline.
+  Not released, for local use: linux-arm64, alpine (musl), and -baseline x64 builds for CPUs without AVX2.
 
 Options:
-  --release           a release build: runs the checks, builds every target (or the ones named)
-                      plus the baseline builds, then the vendor scan and the installer test
-  --baseline          also build the baseline variant of each x64 target
+  --release           a release build: runs the checks, builds the release set (or the targets named),
+                      then the vendor scan and the installer test
+  --baseline          also build the baseline variant of each x64 target (not released)
   --version <x.y.z>   version to stamp in (default: packages/cli/package.json)
   --outdir <dir>      output folder (default: dist)
   --skip-smoke        do not test-run this machine's binary after building
@@ -64,7 +64,7 @@ export function resolveTargets(names: string[], host: string = platformKey()): s
   for (const raw of names) {
     const name = raw.trim().toLowerCase().replace(/^bun-/, '')
     if (name === 'all') {
-      keys.push(...RELEASE_KEYS)
+      keys.push(...RELEASE_BUILD_KEYS)
       continue
     }
     if (HOST_WORDS.has(name)) {
@@ -93,9 +93,9 @@ export function resolveTargets(names: string[], host: string = platformKey()): s
   return [...new Set(keys)]
 }
 
-/** The release/ folder for a build key: macos-arm64, linux-x64-musl, windows-x64-baseline, … */
+/** The release/ folder for a build key: macos (the universal build), macos-arm64, linux-x64, windows-x64, … */
 export function platformFolder(key: string): string {
-  return key.replace(/^darwin-/, 'macos-')
+  return key === MAC_UNIVERSAL ? 'macos' : key.replace(/^darwin-/, 'macos-')
 }
 
 /** What a binary is called inside its platform folder. */
@@ -182,7 +182,7 @@ async function main(): Promise<void> {
     console.error(`build: ${(error as Error).message}`)
     process.exit(2)
   }
-  if (values.baseline || values.release) keys = withBaseline(keys)
+  if (values.baseline) keys = withBaseline(keys)
 
   let version: string
   try {
@@ -242,8 +242,11 @@ async function main(): Promise<void> {
     else console.log(`\n(No ${platformKey()} build, so the installer test was skipped.)`)
   }
 
-  report(collect(versionDir, keys))
-  if (keys.includes(platformKey())) console.log(`\nTry it: ${relative(ROOT, join(RELEASE, platformFolder(platformKey()), shortName(platformKey())))} --version`)
+  // What was built, by file: the two Mac builds may have been merged into the universal one.
+  const built = readdirSync(versionDir).map((name) => keyFromBinaryName(name)).filter((key): key is string => Boolean(key))
+  report(collect(versionDir, built))
+  const mine = built.find((key) => key === platformKey() || (key === MAC_UNIVERSAL && platformKey().startsWith('darwin-')))
+  if (mine) console.log(`\nTry it: ${relative(ROOT, join(RELEASE, platformFolder(mine), shortName(mine)))} --version`)
 }
 
 function report(files: string[]): void {

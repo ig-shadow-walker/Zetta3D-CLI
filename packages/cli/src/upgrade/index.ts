@@ -155,7 +155,7 @@ function pickFile(files: (name: string) => ManifestFile | undefined, key: string
         'Please report this to Zetta 3D support so we can add one.',
     )
   }
-  throw new Error(`zetta ${version} has no build for ${key}.`)
+  throw new Error(`zetta ${version} has no build for ${key}. zetta is built for macOS, Linux (x64) and Windows (x64).`)
 }
 
 async function resolveTarget(

@@ -98,6 +98,11 @@ version_url() {
 	esac
 }
 
+# checksum_of NAME: the expected SHA-256 of a release file, from SHA256SUMS (empty if it has none).
+checksum_of() {
+	awk -v n="$1" '$2 == n || $2 == "*" n { print $1; exit }' "$z_work/SHA256SUMS" | tr 'A-F' 'a-f'
+}
+
 # Appends " (reason)" when the last fetch left one.
 why() {
 	if [ -n "${z_fetch_msg:-}" ]; then printf ' (%s)' "$z_fetch_msg"; fi
@@ -321,8 +326,6 @@ main() {
 	rm -rf "$z_work"
 	mkdir "$z_work" || err "cannot write to $z_dir."
 
-	case "$z_key" in *-musl) ensure_musl_runtime ;; esac
-
 	# Which version.
 	if [ -n "${ZETTA_VERSION:-}" ]; then
 		z_version=${ZETTA_VERSION#v}
@@ -346,16 +349,22 @@ main() {
 		err "could not download $(version_url SHA256SUMS)$(why). Check your internet connection."
 	fi
 
-	# Pick the build: the AVX2-free one only when the CPU needs it.
+	# Pick the build: the AVX2-free one only when the CPU needs it. Every Mac can run zetta-macos,
+	# the universal build (Apple Silicon and Intel in one file).
 	z_name="zetta-$z_key"
 	if [ "$z_baseline" = 1 ]; then z_name="zetta-$z_key-baseline"; fi
-	z_expected=$(awk -v n="$z_name" '$2 == n || $2 == "*" n { print $1; exit }' "$z_work/SHA256SUMS" | tr 'A-F' 'a-f')
+	z_expected=$(checksum_of "$z_name")
+	if [ -z "$z_expected" ] && [ "$z_os" = darwin ]; then
+		z_name=zetta-macos
+		z_expected=$(checksum_of "$z_name")
+	fi
 	if [ -z "$z_expected" ]; then
 		if [ "$z_baseline" = 1 ]; then
 			err "zetta $z_version has no build for this CPU (an x64 processor without AVX2)."
 		fi
-		err "zetta $z_version has no build for $z_key."
+		err "zetta $z_version has no build for $z_key. zetta is built for macOS, Linux (x64) and Windows (x64)."
 	fi
+	case "$z_key" in *-musl) ensure_musl_runtime ;; esac
 
 	say "Downloading zetta $z_version for $z_key..."
 	z_tmp="$z_work/zetta"

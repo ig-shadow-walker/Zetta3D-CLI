@@ -7,8 +7,8 @@ Everything is built on your own machine, and a release is one command. There are
 ```bash
 bun run build                      # this computer → release/macos-arm64/zetta
 bun run build windows              # release/windows-x64/zetta.exe
-bun run build macos linux-arm64    # several at once
-bun run build all                  # every release target
+bun run build macos windows        # several at once
+bun run build all                  # what a release ships: macOS, Linux x64, Windows x64
 bun run build --list               # every target and where it is built
 ```
 
@@ -16,32 +16,29 @@ The binaries land in `release/`, one folder per platform:
 
 ```
 release/
-  macos-arm64/zetta        macos-x64/zetta
-  linux-x64/zetta          linux-arm64/zetta
-  linux-x64-musl/zetta     linux-arm64-musl/zetta      (Alpine and other musl systems)
-  windows-x64/zetta.exe
-  *-baseline/…             (x64 CPUs without AVX2, when built)
-  SHA256SUMS               (a checksum for every binary in release/)
+  macos/zetta              every Mac: the Apple Silicon and Intel builds in one universal file
+  linux-x64/zetta          Linux x64 (glibc)
+  windows-x64/zetta.exe    Windows x64 (Windows on Arm runs it too)
+  SHA256SUMS               a checksum for every binary in release/
 ```
 
 Building one platform replaces only that platform's folder. `release/` and `dist/` are ignored by git, so the binaries (65–90 MB each) never end up in a commit.
 
 | Target | Builds |
 |---|---|
-| `macos` | `darwin-arm64` and `darwin-x64`; `macos-arm64` or `macos-x64` for one |
-| `linux` | `linux-x64` and `linux-arm64` (glibc); `linux-x64` or `linux-arm64` for one |
-| `alpine` | `linux-x64-musl` and `linux-arm64-musl` |
+| `all` | what a release ships: `macos`, `linux-x64` and `windows` |
+| `macos` | both Mac builds, merged into one universal file (`zetta-macos`); `macos-arm64` or `macos-x64` for one |
+| `linux-x64` | Linux x64 (glibc) |
 | `windows` | `windows-x64` |
-| `all` | the 7 release targets |
 | `current` | this computer (the default) |
-| `…-baseline` | x64 builds for CPUs without AVX2, e.g. `linux-x64-baseline`. `--baseline` adds one for every x64 target |
+| not released | `linux-arm64`, `alpine` (musl) and `…-baseline` (x64 CPUs without AVX2) still build, for local use |
 
 How builds work:
 - **Cross-compiling:** every target builds from any machine. Bun downloads each target's runtime once.
-- **macOS builds:** build them on a Mac. Elsewhere they keep a broken code signature and won't start.
+- **macOS builds:** build them on a Mac. Merging the Apple Silicon and Intel builds into one file needs `lipo`, which only macOS has; the build then checks both halves run (the Intel half through Rosetta, when it is installed).
 - **Test run:** this computer's binary is run with `--version` after the build. `--skip-smoke` skips that.
 - **Version:** `--version 1.2.3` stamps another version in; the default comes from `packages/cli/package.json`.
-- **Release files:** the build also writes `dist/v<version>/` (every binary under its full name, `.gz` copies, `SHA256SUMS`) and `dist/latest.json`. Those are what a release publishes.
+- **Release files:** the build also writes `dist/v<version>/` (`zetta-macos`, `zetta-linux-x64`, `zetta-windows-x64.exe` and `SHA256SUMS`) and `dist/latest.json`. Those are what a release publishes.
 
 ## One-time setup
 
@@ -80,9 +77,9 @@ It asks once, then does everything, stopping at the first failure:
    - the new tag doesn't exist yet;
    - the new version is newer than the published one (otherwise installed copies would never be offered it).
 2. **Sets the version** in `packages/cli/package.json`, and regenerates the docs and the agent skill.
-3. **Checks and builds everything:** typecheck, tests and lint; macOS, Linux and Windows, plus the builds for older x64 CPUs; the vendor-name scan; and the real installer, end to end. If anything fails, the version change is undone.
+3. **Checks and builds everything:** typecheck, tests and lint; the three builds (macOS as one universal file, Linux x64, Windows x64); the vendor-name scan; and the real installer, end to end. If anything fails, the version change is undone.
 4. **Commits** "Release v0.2.0", **tags** `v0.2.0`, and **pushes** both.
-5. **Publishes the GitHub release.** It creates a draft, uploads every file (each build and its `.gz` copy, `SHA256SUMS`, `latest.json`, and the two installers), then publishes it. The release page gets the install lines and the commits since the last release.
+5. **Publishes the GitHub release.** It creates a draft, uploads its 7 files (the three builds, `SHA256SUMS`, `latest.json`, and the two installers), then publishes it. The release page gets the install lines and the commits since the last release.
 6. **Reads it back** the way installs see it: the latest release is the new version, both installers point at it, and every file is there.
 
 **Who hears about it:**
@@ -110,20 +107,18 @@ V=0.2.0
 # 1. Set the version, then commit, tag and push it yourself.
 # 2. Build every platform:
 bun run build --release --version $V
-# 3. macOS: sign with the hardened runtime, then notarise.
-for f in dist/v$V/zetta-darwin-*; do
-  case "$f" in *.gz) continue ;; esac
-  codesign --force --timestamp --options runtime --entitlements scripts/macos-entitlements.plist \
-    --sign "Developer ID Application: <Company> (<TEAMID>)" "$f"
-  ditto -c -k --keepParent "$f" "$f.zip"
-  xcrun notarytool submit "$f.zip" --keychain-profile zetta-notary --wait && rm "$f.zip"
-done
+# 3. macOS: sign the universal file (both halves) with the hardened runtime, then notarise.
+f=dist/v$V/zetta-macos
+codesign --force --timestamp --options runtime --entitlements scripts/macos-entitlements.plist \
+  --sign "Developer ID Application: <Company> (<TEAMID>)" "$f"
+ditto -c -k --keepParent "$f" "$f.zip"
+xcrun notarytool submit "$f.zip" --keychain-profile zetta-notary --wait && rm "$f.zip"
 # 4. Windows:
-for f in dist/v$V/zetta-windows-*.exe; do
+for f in dist/v$V/zetta-windows-x64.exe; do
   jsign --storetype PKCS12 --keystore cert.pfx --storepass "$PFX_PASSWORD" \
     --tsaurl http://timestamp.digicert.com --name "Zetta 3D CLI" --url https://zetta3d.ai "$f"
 done
-# 5. New checksums and .gz copies, then publish:
+# 5. New checksums, then publish:
 bun run scripts/build-binaries.ts --version $V --rehash
 bun run release --publish
 ```

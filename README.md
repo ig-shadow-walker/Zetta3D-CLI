@@ -76,7 +76,7 @@ irm https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/ins
 ```
 
 The installer:
-1. picks the right build for your computer (macOS, Linux including Alpine, or Windows; Intel/AMD or ARM);
+1. picks the build for your computer: macOS (Apple Silicon or Intel), Linux (x64) or Windows (x64);
 2. checks the download against its published SHA-256 checksum;
 3. installs `zetta` into `~/.zetta/bin` (Windows: `%LOCALAPPDATA%\zetta\bin`), without sudo or admin rights, and adds it to your `PATH`;
 4. sets up the Zetta 3D skill for any AI coding agent it finds (Claude Code, Codex, Cursor);
@@ -98,16 +98,12 @@ Every [release](https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest)
 
 | Platform | File |
 |---|---|
-| macOS, Apple Silicon | `zetta-darwin-arm64` |
-| macOS, Intel | `zetta-darwin-x64` |
-| Linux x64 | `zetta-linux-x64` |
-| Linux ARM64 | `zetta-linux-arm64` |
-| Alpine and other musl Linux | `zetta-linux-x64-musl`, `zetta-linux-arm64-musl` |
-| Windows x64 | `zetta-windows-x64.exe` |
-| Older x64 CPUs (no AVX2) | the `-baseline` builds |
+| macOS (Apple Silicon and Intel) | `zetta-macos` |
+| Linux (x64) | `zetta-linux-x64` |
+| Windows (x64; Windows on Arm runs it too) | `zetta-windows-x64.exe` |
 
 ```bash
-curl -fLo zetta https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/zetta-darwin-arm64
+curl -fLo zetta https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/zetta-macos
 chmod +x zetta && mv zetta ~/.local/bin/
 ```
 
@@ -267,7 +263,7 @@ Then delete the `# zetta` line the installer added to your shell's startup file.
 
 | Guide | What is in it |
 |---|---|
-| [Installation](docs/installation.md) | Every install method, updating, uninstalling, CI, Alpine and older CPUs |
+| [Installation](docs/installation.md) | Every install method, updating, uninstalling, CI, supported systems |
 | [Getting started](docs/getting-started.md) | From sign-in to a downloaded model, step by step |
 | [Authentication](docs/authentication.md) | Browser sign-in, API keys, the keychain, profiles, CI; plans, trials and billing |
 | [Generating models](docs/generating.md) | Text, picture and multi-view to 3D, every option, splat worlds |

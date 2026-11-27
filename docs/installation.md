@@ -20,11 +20,8 @@ irm https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/ins
 
 What the installer does:
 
-1. **Picks your build.** It detects your system and CPU:
-   - **Apple Silicon** gets the arm64 build, even from a Rosetta shell.
-   - **Alpine and other musl systems** get the `-musl` build.
-   - **x64 CPUs without AVX2** get the `-baseline` build.
-2. **Downloads it.** It fetches the compressed copy (about 30 MB) and checks its SHA-256. It then unpacks it and checks the unpacked binary against the published checksum too.
+1. **Picks your build.** There is one per system: `zetta-macos` for every Mac (Apple Silicon and Intel in one file), `zetta-linux-x64`, and `zetta-windows-x64.exe`.
+2. **Downloads it** (85–145 MB, because the runtime is inside) and checks its SHA-256 against the release's published checksum.
 3. **Tests it.** It runs the new binary once (`--version`) before replacing anything.
 4. **Installs it,** atomically and without sudo or admin rights:
    - macOS and Linux: `~/.zetta/bin/zetta`
@@ -58,7 +55,7 @@ On Windows, set them first: `$env:ZETTA_VERSION = '0.2.0'; irm https://github.co
 
 ## Downloading a build yourself
 
-Every [GitHub release](https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest) has one file per platform: `zetta-darwin-arm64`, `zetta-darwin-x64`, `zetta-linux-x64`, `zetta-linux-arm64`, the `-musl` builds for Alpine, `zetta-windows-x64.exe`, and `-baseline` builds for x64 CPUs without AVX2. Download yours, `chmod +x` it, and put it on your `PATH`:
+Every [GitHub release](https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest) has one file per system: `zetta-macos` (every Mac), `zetta-linux-x64`, and `zetta-windows-x64.exe`. Download yours, `chmod +x` it, and put it on your `PATH`:
 
 ```bash
 curl -fLo zetta https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/zetta-linux-x64
@@ -119,11 +116,10 @@ RUN curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/d
 
 ## Platform notes
 
-- **Supported:** macOS 13 or later (Apple Silicon and Intel); Linux on x64 and arm64, glibc or musl (kernel 5.1+ recommended); Windows 10 or later (x64; Windows on Arm runs the x64 build).
-- **Alpine:** the musl build needs `libstdc++`. When the installer runs as root it adds it with `apk`; otherwise it tells you to run `apk add libstdc++`.
-- **Old x64 CPUs** without AVX2 (some VMs and emulators) get the `-baseline` build automatically.
+- **Supported:** macOS 13 or later (Apple Silicon and Intel); Linux on x64 with glibc (kernel 5.1+ recommended); Windows 10 or later (x64; Windows on Arm runs the x64 build).
+- **Not supported:** Linux on ARM, Alpine and other musl-based Linux, and x64 CPUs without AVX2 (from before 2013, and some VMs). The installer says so instead of installing.
 - **macOS Gatekeeper and Windows SmartScreen** don't block binaries installed with `curl` or `irm`. A binary downloaded with a browser may need to be allowed once until releases are signed.
-- **Size:** about 30 MB to download, 65–90 MB on disk, because the JavaScript runtime is inside.
+- **Size:** 85–90 MB on Linux and Windows, about 145 MB on macOS (two builds in one file), because the JavaScript runtime is inside.
 
 ## Troubleshooting the install
 
@@ -131,7 +127,7 @@ RUN curl -fsSL https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/d
 |---|---|
 | `zetta: command not found` | Open a new terminal, or run `export PATH="$HOME/.zetta/bin:$PATH"` |
 | `checksum mismatch` | The download was corrupted or tampered with; nothing was installed. Try again; if it persists, report it |
-| `does not run on this system` | Your platform is unsupported, or on Alpine `libstdc++` is missing (`apk add libstdc++`) |
+| `has no build for …` or `does not run on this system` | Your system isn't supported: see [Platform notes](#platform-notes) |
 | `could not download` | Check your connection and any proxy (`HTTPS_PROXY` is honoured by curl and PowerShell) |
 | Windows: `running scripts is disabled` | Use `powershell -ExecutionPolicy Bypass -c "irm https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest/download/install.ps1 \| iex"` |
 

@@ -29,6 +29,8 @@ if (!existsSync(latestPath)) {
 const manifest: LatestManifest = parseManifest(JSON.parse(readFileSync(latestPath, 'utf8')), latestPath)
 const version = manifest.version
 const url = (name: string) => versionUrl(BASE, version, name)
+/** The build for a key; every Mac key falls back to the universal zetta-macos. */
+const fileFor = (key: string) => manifest.files[key] ?? (key.startsWith('darwin-') ? manifest.files['darwin-universal'] : undefined)
 
 // ── Homebrew ────────────────────────────────────────────────────────────────
 
@@ -40,7 +42,7 @@ const brewTargets: Array<[os: 'macos' | 'linux', cpu: 'arm' | 'intel', key: stri
 ]
 const blocks: Record<'macos' | 'linux', string[]> = { macos: [], linux: [] }
 for (const [os, cpu, key] of brewTargets) {
-  const file = manifest.files[key]
+  const file = fileFor(key)
   if (!file) continue
   blocks[os].push(`    on_${cpu} do\n      url "${url(file.name)}"\n      sha256 "${file.sha256}"\n    end`)
 }
@@ -92,7 +94,7 @@ const optional: Record<string, string> = {}
 const packaged: string[] = []
 
 for (const [key, platform] of Object.entries(NPM_PLATFORMS)) {
-  const file = manifest.files[key]
+  const file = fileFor(key)
   const source = file ? join(DIST, `v${version}`, file.name) : undefined
   if (!file || !source || !existsSync(source)) continue
   const name = `@zetta3d/cli-${key}`

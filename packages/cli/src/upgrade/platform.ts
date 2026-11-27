@@ -95,8 +95,12 @@ export function platformKey(info: Partial<PlatformInfo> = {}): string {
   return key
 }
 
-/** Keys to try in order: the exact one first, then a build that still runs here (Windows on Arm runs x64). */
+/**
+ * Keys to try in order: the exact one first, then a build that still runs here. Every Mac runs the
+ * universal build (`darwin-universal`, the file zetta-macos); Windows on Arm runs x64.
+ */
 export function candidateKeys(key: string): string[] {
+  if (key.startsWith('darwin-')) return [key, 'darwin-universal']
   if (key === 'windows-arm64') return ['windows-arm64', 'windows-x64']
   return [key]
 }

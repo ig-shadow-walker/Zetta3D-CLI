@@ -2,15 +2,20 @@
  * Compiles the CLI into self-contained executables (Bun runtime included) and writes the
  * release layout the installers and `zetta upgrade` read:
  *
- *   dist/v<version>/zetta-<os>-<arch>[-musl][.exe]
+ *   dist/v<version>/zetta-macos              every Mac: the arm64 and x64 builds merged with lipo
+ *   dist/v<version>/zetta-linux-x64
+ *   dist/v<version>/zetta-windows-x64.exe
  *   dist/v<version>/SHA256SUMS
  *   dist/latest.json
+ *
+ * Building both Mac targets on a Mac merges them into the one universal file; other targets
+ * (linux-arm64, -musl, -baseline) can be named with --target for local use, but are not released.
  *
  * plus dist/bundle/zetta.js: the same minified JavaScript the binaries embed, for the vendor-name
  * scan (scripts/scan-vendor-names.ts). It is kept outside v<version>/ so it is never published.
  *
  * Usage:
- *   bun run scripts/build-binaries.ts                 # every release target
+ *   bun run scripts/build-binaries.ts                 # the release: macOS (universal), Linux x64, Windows x64
  *   bun run scripts/build-binaries.ts --current       # only this machine's target
  *   bun run scripts/build-binaries.ts --version 1.2.3 # override packages/cli/package.json
  *   bun run scripts/build-binaries.ts --baseline      # also build x64 builds for CPUs without AVX2
@@ -25,11 +30,11 @@ import { createHash } from 'node:crypto'
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
-import { gzipSync } from 'node:zlib'
 import {
   binaryName,
   formatChecksums,
   keyFromBinaryName,
+  MAC_UNIVERSAL,
   normalizeVersion,
   type LatestManifest,
   type ManifestFile,
@@ -50,16 +55,14 @@ const USAGE = `Usage: bun run scripts/build-binaries.ts [options]
   --rehash             only recompute SHA256SUMS and latest.json for --version
   --skip-smoke         do not run the host binary with --version after building`
 
-/** The release targets. Order is the order in latest.json. */
-export const TARGETS = [
-  'bun-darwin-arm64',
-  'bun-darwin-x64',
-  'bun-linux-x64',
-  'bun-linux-arm64',
-  'bun-linux-x64-musl',
-  'bun-linux-arm64-musl',
-  'bun-windows-x64',
-] as const
+/** What a release builds. The two Mac targets are merged into the one universal file, zetta-macos. */
+export const TARGETS = ['bun-darwin-arm64', 'bun-darwin-x64', 'bun-linux-x64', 'bun-windows-x64'] as const
+
+/** The files a release ships, by platform key. Order is the order in latest.json. */
+export const RELEASE_KEYS = [MAC_UNIVERSAL, 'linux-x64', 'windows-x64'] as const
+
+/** Targets that can be built locally (`bun run build alpine`, …) but are not released. */
+export const OTHER_TARGETS = ['bun-linux-arm64', 'bun-linux-x64-musl', 'bun-linux-arm64-musl'] as const
 
 /** For x64 CPUs without AVX2 (old hardware, some VMs and emulators). Picked automatically by the installers. */
 export const BASELINE_TARGETS = [
@@ -69,7 +72,7 @@ export const BASELINE_TARGETS = [
   'bun-windows-x64-baseline',
 ] as const
 
-const KEY_ORDER: string[] = [...TARGETS, ...BASELINE_TARGETS].map((t) => t.replace(/^bun-/, ''))
+const KEY_ORDER: string[] = [...RELEASE_KEYS, ...[...TARGETS, ...OTHER_TARGETS, ...BASELINE_TARGETS].map((t) => t.replace(/^bun-/, ''))]
 
 function fail(msg: string): never {
   console.error(`build-binaries: ${msg}`)
@@ -103,18 +106,7 @@ export async function writeManifest(outdir: string, version: string): Promise<La
     const key = keyFromBinaryName(name)
     if (!key) continue
     const path = join(versionDir, name)
-    // A gzip copy for the installers and `zetta upgrade`: about half the download.
-    const gzPath = `${path}.gz`
-    writeFileSync(gzPath, gzipSync(readFileSync(path), { level: 9 }))
-    found.push({
-      key,
-      file: {
-        name,
-        sha256: await sha256File(path),
-        size: statSync(path).size,
-        gz: { name: `${name}.gz`, sha256: await sha256File(gzPath), size: statSync(gzPath).size },
-      },
-    })
+    found.push({ key, file: { name, sha256: await sha256File(path), size: statSync(path).size } })
   }
   if (found.length === 0) fail(`no zetta-* binaries in ${versionDir}`)
   const rank = (k: string) => (KEY_ORDER.includes(k) ? KEY_ORDER.indexOf(k) : KEY_ORDER.length)
@@ -125,7 +117,7 @@ export async function writeManifest(outdir: string, version: string): Promise<La
     released: releasedAt(),
     files: Object.fromEntries(found.map((f) => [f.key, f.file])),
   }
-  writeFileSync(join(versionDir, 'SHA256SUMS'), formatChecksums(found.flatMap((f) => (f.file.gz ? [f.file, f.file.gz] : [f.file]))))
+  writeFileSync(join(versionDir, 'SHA256SUMS'), formatChecksums(found.map((f) => f.file)))
   writeFileSync(join(outdir, 'latest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
   return manifest
 }
@@ -145,6 +137,33 @@ function fixMacSignature(file: string): void {
   if (run('codesign', ['--verify', file], { quiet: true }).ok) return
   const r = run('codesign', ['--force', '--sign', '-', file], { quiet: true })
   if (!r.ok) fail(`could not ad-hoc sign ${file}:\n${r.out}`)
+}
+
+/**
+ * Merges the arm64 and x64 Mac builds into one universal file, zetta-macos, so every Mac downloads
+ * the same thing. Each half keeps its own (ad hoc) signature. Checks that both halves run: the
+ * native one directly, the other through Rosetta when it is installed. The two thin files go away.
+ */
+function mergeMacBuilds(versionDir: string, version: string, smoke: boolean): string | undefined {
+  const arm = join(versionDir, binaryName('darwin-arm64'))
+  const intel = join(versionDir, binaryName('darwin-x64'))
+  if (!existsSync(arm) || !existsSync(intel)) return undefined
+  if (process.platform !== 'darwin') fail('merging the Mac builds into one needs `lipo`, which only macOS has. Build releases on a Mac.')
+  const universal = join(versionDir, binaryName(MAC_UNIVERSAL))
+  const merged = run('lipo', ['-create', '-output', universal, arm, intel], { quiet: true })
+  if (!merged.ok) fail(`lipo could not merge the Mac builds:\n${merged.out}`)
+  if (!run('codesign', ['--verify', universal], { quiet: true }).ok) fail(`${display(universal)} has no valid signature after merging.`)
+  if (smoke) {
+    smokeTest(universal, version)
+    const otherArch = process.arch === 'arm64' ? 'x86_64' : 'arm64'
+    if (run('arch', [`-${otherArch}`, '/usr/bin/true'], { quiet: true }).ok) {
+      const r = spawnSync('arch', [`-${otherArch}`, universal, '--version'], { encoding: 'utf8', timeout: 60_000 })
+      if (r.status !== 0 || !`${r.stdout}`.includes(version)) fail(`the ${otherArch} half of ${display(universal)} does not run: ${`${r.stdout}${r.stderr}`.trim().slice(0, 300)}`)
+    }
+  }
+  rmSync(arm, { force: true })
+  rmSync(intel, { force: true })
+  return universal
 }
 
 function windowsMetadata(version: string): string[] {
@@ -294,6 +313,8 @@ async function main(): Promise<void> {
         'Build releases on macOS (docs/releasing.md).',
     )
   }
+  const universal = mergeMacBuilds(versionDir, version, !values['skip-smoke'])
+  if (universal) console.log(`  ${'macos (arm64 + x64)'.padEnd(26)} ${mb(statSync(universal).size).padStart(9)}  ${display(universal)}`)
 
   const bundleDir = join(outdir, 'bundle')
   rmSync(bundleDir, { recursive: true, force: true })
