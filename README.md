@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/ig-shadow-walker/Zetta3D-CLI?style=flat-square&label=release&color=15130F"></a>
+  <a href="https://github.com/ig-shadow-walker/Zetta3D-CLI/releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/release-latest-15130F?style=flat-square"></a>
   <a href="#install"><img alt="macOS, Linux and Windows" src="https://img.shields.io/badge/macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-15130F?style=flat-square"></a>
   <a href="#install"><img alt="One-line install, no dependencies" src="https://img.shields.io/badge/install-one%20line-15130F?style=flat-square"></a>
   <a href="#use-it-from-ai-agents"><img alt="MCP server included" src="https://img.shields.io/badge/MCP-server%20included-1677FF?style=flat-square"></a>
